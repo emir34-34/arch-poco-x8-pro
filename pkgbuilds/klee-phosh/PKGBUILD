@@ -1,0 +1,20 @@
+# klee: Phosh as the phone's interface for now: started at boot as user
+# "klee" on the panel taken from the Android composer, CPU-rendered until the
+# Mali path is ported. Replaces the test screen (which stays installed).
+pkgname=klee-phosh
+pkgver=1
+pkgrel=1
+pkgdesc="Phosh session for the POCO X8 Pro (klee)"
+arch=(any)
+license=(GPL-2.0-or-later)
+depends=(phosh phoc squeekboard seatd phosh-mobile-settings gnome-console gnome-calls mesa klee-testscreen)
+install=klee-phosh.install
+source=(klee-phosh.service 90-klee-phosh.conf env.conf phoc.ini)
+sha256sums=(SKIP SKIP SKIP SKIP)
+
+package() {
+	install -Dm644 klee-phosh.service "$pkgdir/usr/lib/systemd/system/klee-phosh.service"
+	install -Dm644 90-klee-phosh.conf "$pkgdir/usr/lib/environment.d/90-klee-phosh.conf"
+	install -Dm644 phoc.ini "$pkgdir/etc/phosh/phoc.ini"
+	install -Dm644 env.conf "$pkgdir/usr/lib/systemd/system/klee-phosh.service.d/env.conf"
+}

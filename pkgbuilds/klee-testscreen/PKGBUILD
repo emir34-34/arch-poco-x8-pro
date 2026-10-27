@@ -1,0 +1,31 @@
+# klee: the first screen of Arch on the POCO X8 Pro until our own interface
+# exists: a window in the middle of the panel listing what works and what
+# does not (klee-selftest), drawn with cairo straight into DRM dumb buffers,
+# so it shows even when the GPU path is what is broken. The GPU is tested on
+# its own (klee-gputest, EGL through libhybris).
+pkgname=klee-testscreen
+pkgver=1
+pkgrel=2
+pkgdesc="Test screen and self-test for the POCO X8 Pro (klee)"
+arch=(aarch64)
+license=(GPL-2.0-or-later)
+depends=(cairo pango libdrm inter-font python lxc libhybris klee-hybris-runtime)
+install=klee-testscreen.install
+source=(klee-testscreen.c klee-testscreen.h drm.c klee-gputest.c klee-selftest
+	klee-display-take klee-testscreen.service klee-selftest.service)
+sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
+
+build() {
+	$CC $CFLAGS -Wall -DKLEE_DEVICE -o klee-testscreen klee-testscreen.c drm.c $LDFLAGS \
+		$($PKG_CONFIG --cflags --libs pangocairo cairo libdrm)
+	$CC $CFLAGS -Wall -o klee-gputest klee-gputest.c $LDFLAGS -lEGL -lGLESv2
+}
+
+package() {
+	install -Dm755 klee-testscreen "$pkgdir/usr/bin/klee-testscreen"
+	install -Dm755 klee-selftest "$pkgdir/usr/bin/klee-selftest"
+	install -Dm755 klee-gputest "$pkgdir/usr/lib/klee/klee-gputest"
+	install -Dm755 klee-display-take "$pkgdir/usr/lib/klee/klee-display-take"
+	install -Dm644 klee-testscreen.service "$pkgdir/usr/lib/systemd/system/klee-testscreen.service"
+	install -Dm644 klee-selftest.service "$pkgdir/usr/lib/systemd/system/klee-selftest.service"
+}

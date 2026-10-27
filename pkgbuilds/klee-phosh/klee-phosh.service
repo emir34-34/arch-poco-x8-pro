@@ -1,0 +1,27 @@
+[Unit]
+Description=klee: Phosh on the panel
+# the panel is the Android composer's until klee-display-take stops it
+After=klee-brightness.service seatd.service systemd-user-sessions.service
+Wants=seatd.service
+Conflicts=klee-testscreen.service
+
+[Service]
+Type=simple
+User=klee
+WorkingDirectory=~
+PAMName=login
+TTYPath=/dev/tty7
+StandardInput=tty-fail
+UtmpIdentifier=tty7
+UtmpMode=user
+ExecStartPre=+/usr/lib/klee/klee-display-take
+# phoc (wlroots) on DRM with the CPU renderer for now: the Mali path needs our
+# hybris gralloc patch ported to phoc's wlroots
+Environment=LIBSEAT_BACKEND=seatd WLR_RENDERER=pixman WLR_BACKENDS=drm,libinput WLR_DRM_DEVICES=/dev/dri/card0
+ExecStart=/usr/bin/phosh-session
+Restart=always
+RestartSec=3
+StandardError=journal+kmsg
+
+[Install]
+WantedBy=graphical.target

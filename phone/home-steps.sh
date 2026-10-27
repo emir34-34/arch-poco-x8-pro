@@ -13,7 +13,9 @@ set -euo pipefail
 A="$HOME/klee-ut/arch"
 H="$A/phone"
 R="$A/repo"
-UPDATES="klee-container-1-5-any.pkg.tar.zst bluebinder-1.0.19-3-aarch64.pkg.tar.zst"
+UPDATES="klee-container-1-5-any.pkg.tar.zst bluebinder-1.0.19-3-aarch64.pkg.tar.zst klee-testscreen-1-2-aarch64.pkg.tar.zst klee-phosh-1-1-any.pkg.tar.zst"
+# from Arch Linux ARM (downloads a few hundred MB: use Wi-Fi, not mobile data)
+REPO_PKGS="phosh phoc squeekboard seatd phosh-mobile-settings gnome-console gnome-calls mesa cairo pango libdrm inter-font"
 
 case "${1:-}" in
 update)
@@ -25,6 +27,7 @@ update)
 	"$H/arundev" <<EOF
 set -e
 cd /root/pkgs
+pacman -Sy --noconfirm --needed $REPO_PKGS
 pacman -U --noconfirm $UPDATES
 export DM_DISABLE_UDEV=1
 DEV=\$(readlink -f /dev/block/by-name/userdata)
@@ -33,11 +36,12 @@ dmsetup mknodes ut_data
 mkdir -p /mnt/ut
 mount -t ext4 -o noatime /dev/mapper/ut_data /mnt/ut
 trap 'cd /; umount /mnt/ut; dmsetup remove ut_data' EXIT
-pacman --root /mnt/ut/halium-rootfs --dbpath /mnt/ut/halium-rootfs/var/lib/pacman \
-	--hookdir /mnt/ut/halium-rootfs/etc/pacman.d/hooks -U --noconfirm $UPDATES
+R="--root /mnt/ut/halium-rootfs --dbpath /mnt/ut/halium-rootfs/var/lib/pacman --hookdir /mnt/ut/halium-rootfs/etc/pacman.d/hooks"
+pacman \$R -Sy --noconfirm --needed $REPO_PKGS
+pacman \$R -U --noconfirm $UPDATES
 # leftovers of the build chroot's test binds
 rmdir /mnt/ut/halium-rootfs/{apex,linkerconfig,odm,product,system,system_ext,vendor} 2>/dev/null || true
-pacman --root /mnt/ut/halium-rootfs --dbpath /mnt/ut/halium-rootfs/var/lib/pacman -Q klee-container bluebinder
+pacman \$R -Q klee-container bluebinder klee-testscreen klee-phosh phosh
 sync
 EOF
 	adb shell "su -c 'grep -c klee_arch /proc/mounts; ls /dev/mapper | grep -c ut_data'" || true

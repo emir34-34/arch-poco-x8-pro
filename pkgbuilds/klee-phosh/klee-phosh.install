@@ -1,0 +1,15 @@
+post_install() {
+	# the phone's user; Phosh's lock screen asks for this password (a PIN)
+	if ! id klee >/dev/null 2>&1; then
+		useradd -m -s /bin/bash klee
+		echo 'klee:1234' | chpasswd
+	fi
+	for g in video input audio seat network android_graphics android_input android_media android_net; do
+		getent group $g >/dev/null && usermod -aG $g klee
+	done
+	systemctl enable seatd.service klee-phosh.service 2>/dev/null
+	systemctl disable klee-testscreen.service 2>/dev/null
+	systemctl set-default graphical.target 2>/dev/null
+	true
+}
+post_upgrade() { post_install; }

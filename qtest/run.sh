@@ -44,7 +44,8 @@ UUID=94a86f74-0000-4000-8000-00000000c0de
 if [ -n "${REAL:-}" ]; then
 	MIB=4608
 	rm -rf ud; mkdir -p ud/halium-rootfs
-	# packages built after the pull, unpacked over it (as pacman -U would)
+	# packages built after the pull, unpacked over it (as pacman -U would;
+	# their install scripts do not run: test units are enabled below)
 	NEWPKGS="${NEWPKGS:-}"
 	# owners kept as on the phone: unpack and build the image as "root" of a
 	# user namespace (subuids)
@@ -54,6 +55,8 @@ if [ -n "${REAL:-}" ]; then
 		mkdir -p ud/halium-rootfs/proc ud/halium-rootfs/sys ud/halium-rootfs/dev ud/halium-rootfs/tmp &&
 		cp '$Q/qtest-report.service' ud/halium-rootfs/etc/systemd/system/ &&
 		ln -sf ../qtest-report.service ud/halium-rootfs/etc/systemd/system/multi-user.target.wants/qtest-report.service &&
+		for u in klee-testscreen klee-selftest; do [ -e ud/halium-rootfs/usr/lib/systemd/system/\$u.service ] &&
+			ln -sf /usr/lib/systemd/system/\$u.service ud/halium-rootfs/etc/systemd/system/multi-user.target.wants/\$u.service; done; true &&
 		mkfs.ext4 -q -F -U $UUID -L ut_data -b 4096 -d ud ut_data.img $((MIB * 256 - 1))"
 else
 	mkfs.ext4 -q -F -U $UUID -L ut_data -b 4096 -d ud ut_data.img $((MIB * 256 - 1))
@@ -90,13 +93,28 @@ for m in virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk; do
 	cp "$(find "$K/drivers" -name "$m.ko" | head -1)" vr/lib/modules/
 	echo "$m.ko" >> vr/lib/modules/modules.load
 done
+if [ -n "${SHOT:-}" ]; then
+	# (QEMU only: the phone's kernel has no virtio GPU; built with M= for this test)
+	cp "$K/drivers/virtio/virtio_dma_buf.ko" "$K/drivers/gpu/drm/virtio/virtio-gpu.ko" vr/lib/modules/
+	printf 'virtio_dma_buf.ko\nvirtio-gpu.ko\n' >> vr/lib/modules/modules.load
+fi
 "$A/xenv/bin/aarch64-strip" --strip-debug vr/lib/modules/*.ko
 (cd vr && find . | sort | cpio -o -H newc -R 0:0 --quiet) | lz4 -l -12 -q > vendor_ramdisk.lz4
 MAP="$W/ut_data.map" RAMDISK_OUT="$W/init_ramdisk.lz4" "$A/make-klee-initrd.sh" >/dev/null
 cat vendor_ramdisk.lz4 init_ramdisk.lz4 > initrd.img
 
 cp "$K/arch/arm64/boot/Image" Image
-timeout "${QEMU_TIMEOUT:-600}" "$HOME/klee-ut/qemu/usr/bin/qemu-system-aarch64" \
+# SHOT=1: a virtio GPU with a phone-shaped screen, screenshots every 30 s in
+# work/shots/ (QEMU monitor screendump)
+GPUARGS=""
+if [ -n "${SHOT:-}" ]; then
+	GPUARGS="-device virtio-gpu-pci,xres=634,yres=1378 -display none -monitor unix:$W/mon.sock,server,nowait"
+	mkdir -p shots
+	( sleep 20; i=0; while [ -S "$W/mon.sock" ]; do sleep 30; i=$((i + 1))
+		python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.recv(4096); s.send(('screendump -f png $W/shots/%03d.png\n' % int(sys.argv[2])).encode()); import time; time.sleep(1)" "$W/mon.sock" $i 2>/dev/null || break
+	done ) &
+fi
+QEMU_MODULE_DIR="$HOME/klee-ut/qemu-mods/usr/lib/qemu" timeout "${QEMU_TIMEOUT:-600}" "$HOME/klee-ut/qemu/usr/bin/qemu-system-aarch64" $GPUARGS \
 	-machine virt,gic-version=3 -cpu max -smp 4 -m 2048 -nographic -no-reboot -nic none \
 	-kernel Image -initrd initrd.img \
 	-append "console=ttyAMA0 printk.devkmsg=on androidboot.force_normal_boot=1 loglevel=6 systemd.show_status=1" \

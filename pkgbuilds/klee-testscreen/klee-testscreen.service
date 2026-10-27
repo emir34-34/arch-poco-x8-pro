@@ -1,0 +1,19 @@
+[Unit]
+Description=klee: test screen (what works and what does not)
+# Not ordered after the Android container: this screen matters most when
+# Android does not come up. klee-display-take waits up to 60 s for the
+# composer to start (and stops it); if the composer comes later and takes
+# the panel, this service fails and restarts, and takes it back.
+After=klee-brightness.service
+Wants=klee-selftest.service
+
+[Service]
+ExecStartPre=/usr/lib/klee/klee-display-take
+ExecStart=/usr/bin/klee-testscreen
+Restart=always
+RestartSec=2
+# errors also in the kernel log: visible at once, even with a broken journal
+StandardError=journal+kmsg
+
+[Install]
+WantedBy=multi-user.target

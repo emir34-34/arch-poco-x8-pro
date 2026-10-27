@@ -1,0 +1,22 @@
+#!/bin/sh
+# klee: take the panel (/dev/dri/card0) from the Android container for a
+# Linux program, as ztOS did: wait until the container's init has started the
+# composer (or it would start it after us and take the display back), then
+# stop the composer and MediaTek's PQ service, which hold the card as DRM
+# master, and wait until no process has it open.
+A="lxc-attach -n android -- /system/bin"
+for i in $(seq 60); do
+	[ "$($A/getprop init.svc.vendor.hwcomposer 2>/dev/null)" = running ] && break
+	sleep 1
+done
+$A/setprop ctl.stop vendor.hwcomposer
+$A/setprop ctl.stop vender.mediatek.hardware.pq_aidl-default
+for i in $(seq 20); do
+	held=0
+	for p in /proc/[0-9]*; do
+		ls -l $p/fd 2>/dev/null | grep -q /dev/dri/card0 && held=1 && break
+	done
+	[ $held = 0 ] && break
+	sleep 0.5
+done
+exit 0

@@ -1,0 +1,15 @@
+#title	Arch Linux · 6.6.143-klee · açılış 14 sn
+#foot	Dokunmatiği denemek için ekrana dokun · USB SSH 10.15.19.82
+ok	Ekran ve GPU	Mali-G720 · 120 Hz
+wait	Dokunmatik	ekrana dokun
+ok	Android katmanı	çalışıyor · 9 sn
+ok	Wi-Fi	bağlı · 5 GHz
+wait	Mobil ağ	SIM bekleniyor
+ok	Bluetooth	açık
+none	Ses	test edilmedi
+ok	Pil	%82 · şarj oluyor
+ok	Depolama	64 GB · 49 GB boş
+ok	USB SSH	10.15.19.82
+fail	Kamera	henüz yok
+ok	Titreşim	hazır
+wait	Konum (GPS)	uydu aranıyor

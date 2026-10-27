@@ -6,4 +6,5 @@ After=multi-user.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'sleep 40; { echo BEGIN; systemd-analyze; systemctl --failed --no-pager --plain; systemctl list-jobs --no-pager; journalctl -b --no-pager -o cat -u mount-android-partitions | tail -40; journalctl -b --no-pager -o cat -u bluebinder | tail -8; echo END; } 2>&1 | while IFS= read -r l; do echo "QR: $l" > /dev/kmsg; done; systemctl poweroff'
+Environment=QTEST_WAIT=150
+ExecStart=/bin/sh -c 'sleep ${QTEST_WAIT:-40}; { echo BEGIN; systemd-analyze; systemctl --failed --no-pager --plain; systemctl list-jobs --no-pager; journalctl -b --no-pager -o cat -u klee-testscreen -u klee-selftest | tail -40; cat /run/klee-test/status; echo END; } 2>&1 | while IFS= read -r l; do echo "QR: $l" > /dev/kmsg; done; systemctl poweroff'

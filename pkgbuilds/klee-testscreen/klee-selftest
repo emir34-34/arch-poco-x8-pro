@@ -1,0 +1,212 @@
+#!/usr/bin/python3
+# klee-selftest: what works on the phone, for klee-testscreen. Every 2 s it
+# writes /run/klee-test/status, one line per item:
+#     <ok|fail|wait|none>\t<name>\t<detail>
+# plus "#title" and "#foot" lines. Only reads the system; changes nothing.
+import json, os, subprocess, time
+
+OUT = "/run/klee-test/status"
+
+
+def run(*cmd, timeout=3):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except Exception:
+        return ""
+
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def busctl(*args):
+    """busctl --json=short call/get-property, the decoded "data" or None"""
+    out = run("busctl", "--system", "--json=short", *args)
+    try:
+        return json.loads(out)["data"]
+    except Exception:
+        return None
+
+
+def boot_seconds():
+    out = run("systemd-analyze")
+    # "Startup finished in 3.1s (kernel) + 9.9s (userspace) = 13.0s"
+    if "=" in out:
+        tail = out.split("=")[-1].split("\n")[0].strip()
+        if tail.endswith("ms"):
+            return "1 sn"
+        try:
+            if "min" in tail:
+                m, s = tail.split("min")
+                return f"{int(m) * 60 + round(float(s.strip().rstrip('s') or 0))} sn"
+            return f"{round(float(tail.rstrip('s')))} sn"
+        except ValueError:
+            pass
+    return None
+
+
+def panel():
+    p = read("/run/klee-test/panel")
+    return ("ok", p) if p else ("wait", "açılıyor")
+
+
+GPU = None
+
+
+def gpu():
+    """the Mali through libhybris, tested once (klee-gputest prints GL_RENDERER)"""
+    global GPU
+    if GPU is None or GPU[0] != "ok":
+        if not os.path.exists("/dev/socket/property_service"):
+            return ("wait", "Android bekleniyor")
+        env = dict(os.environ, EGL_PLATFORM="null",
+                   LD_PRELOAD="/usr/lib/libtls-padding.so:/usr/lib/libklee_free.so")
+        try:
+            out = subprocess.run(["/usr/lib/klee/klee-gputest"], capture_output=True, text=True,
+                                 timeout=15, env=env).stdout
+        except Exception:
+            out = ""
+        r = [l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("GL_RENDERER ")]
+        GPU = ("ok", r[0]) if r else ("fail", "EGL çalışmadı")
+    return GPU
+
+
+def android():
+    st = run("lxc-info", "-n", "android", "-s", "-H")
+    if st == "RUNNING":
+        done = run("getprop", "sys.boot_completed") == "1" or os.path.exists("/dev/socket/property_service")
+        return ("ok", "çalışıyor") if done else ("wait", "Android açılıyor")
+    if st:
+        return ("wait", st.lower())
+    return ("fail", "konteyner yok")
+
+
+def wifi():
+    out = run("nmcli", "-t", "-f", "TYPE,STATE,CONNECTION", "device")
+    for line in out.splitlines():
+        t, _, rest = line.partition(":")
+        if t != "wifi":
+            continue
+        state, _, conn = rest.partition(":")
+        if state.startswith("connected") or state.startswith("bağlı"):
+            return ("ok", f"bağlı · {conn}" if conn else "bağlı")
+        if "unavailable" in state:
+            return ("wait", "çip açılıyor")
+        return ("wait", "ağ yok")
+    return ("wait", "çip bekleniyor")
+
+
+def mobile():
+    modems = busctl("call", "org.ofono", "/", "org.ofono.Manager", "GetModems")
+    if modems is None:
+        return ("wait", "oFono bekleniyor")
+    modems = modems[0] if modems else []
+    if not modems:
+        return ("wait", "modem bekleniyor")
+    for path, props in modems:
+        sim = busctl("call", "org.ofono", path, "org.ofono.SimManager", "GetProperties")
+        if sim and not sim[0].get("Present", {}).get("data", False):
+            continue
+        reg = busctl("call", "org.ofono", path, "org.ofono.NetworkRegistration", "GetProperties")
+        if reg:
+            r = reg[0]
+            status = r.get("Status", {}).get("data", "")
+            name = r.get("Name", {}).get("data", "")
+            strength = r.get("Strength", {}).get("data")
+            if status in ("registered", "roaming"):
+                d = name or "kayıtlı"
+                if strength is not None:
+                    d += f" · %{strength}"
+                return ("ok", d)
+            return ("wait", "şebeke aranıyor")
+        return ("wait", "SIM okunuyor")
+    return ("fail", "SIM yok")
+
+
+def bluetooth():
+    p = busctl("get-property", "org.bluez", "/org/bluez/hci0", "org.bluez.Adapter1", "Powered")
+    if p is None:
+        return ("wait", "bekleniyor")
+    return ("ok", "açık") if p else ("ok", "kapalı")
+
+
+def battery():
+    cap = read("/sys/class/power_supply/battery/capacity")
+    if not cap:
+        return ("fail", "pil bilgisi yok")
+    st = read("/sys/class/power_supply/battery/status")
+    word = {"Charging": "şarj oluyor", "Discharging": "pilde", "Full": "dolu",
+            "Not charging": "şarj olmuyor"}.get(st, st.lower())
+    return ("ok", f"%{cap} · {word}")
+
+
+def storage():
+    try:
+        v = os.statvfs("/userdata")
+    except OSError:
+        return ("fail", "/userdata yok")
+    total = v.f_blocks * v.f_frsize / 1e9
+    free = v.f_bavail * v.f_frsize / 1e9
+    return ("ok", f"{total:.0f} GB · {free:.0f} GB boş")
+
+
+def usb_ssh():
+    if run("systemctl", "is-active", "klee-usbnet") == "active" and "10.15.19.82" in run("ip", "-4", "-o", "addr"):
+        return ("ok", "10.15.19.82")
+    return ("wait", "USB bekleniyor")
+
+
+def vibration():
+    for d in os.listdir("/sys/class/input") if os.path.isdir("/sys/class/input") else []:
+        caps = read(f"/sys/class/input/{d}/device/capabilities/ff")
+        if caps and caps.strip("0 "):
+            return ("ok", "hazır")
+    if os.path.exists("/sys/class/leds/vibrator"):
+        return ("ok", "hazır")
+    return ("wait", "bekleniyor")
+
+
+ROWS = [
+    ("Ekran", panel),
+    ("GPU", gpu),
+    ("Dokunmatik", lambda: ("wait", "ekrana dokun")),	# decided by the screen
+    ("Android katmanı", android),
+    ("Wi-Fi", wifi),
+    ("Mobil ağ", mobile),
+    ("Bluetooth", bluetooth),
+    ("Ses", lambda: ("none", "test edilmedi")),
+    ("Pil", battery),
+    ("Depolama", storage),
+    ("USB SSH", usb_ssh),
+    ("Kamera", lambda: ("fail", "henüz yok")),
+    ("Titreşim", vibration),
+    ("Konum (GPS)", lambda: ("none", "henüz yok")),
+]
+
+
+def main():
+    os.makedirs("/run/klee-test", exist_ok=True)
+    kernel = os.uname().release.split("-g")[0]
+    while True:
+        boot = boot_seconds()
+        lines = [f"#title\tArch Linux · {kernel} · " + (f"açılış {boot}" if boot else "açılıyor…"),
+                 "#foot\tDokunmatiği denemek için ekrana dokun · USB SSH 10.15.19.82"]
+        for name, check in ROWS:
+            try:
+                st, detail = check()
+            except Exception as e:
+                st, detail = "fail", type(e).__name__
+            lines.append(f"{st}\t{name}\t{detail}")
+        tmp = OUT + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, OUT)
+        time.sleep(2)
+
+
+if __name__ == "__main__":
+    main()

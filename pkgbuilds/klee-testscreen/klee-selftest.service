@@ -1,0 +1,10 @@
+[Unit]
+Description=klee: system self-test for the test screen
+
+[Service]
+ExecStart=/usr/bin/klee-selftest
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
