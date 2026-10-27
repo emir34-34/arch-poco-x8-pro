@@ -1,0 +1,3 @@
+#!/bin/sh
+# xinstall: unpack built packages into the PC sysroot so later builds can link against them
+for f; do tar -xf "$f" -C "$HOME/klee-ut/arch/sysroot" --exclude='.[A-Z]*' usr; done

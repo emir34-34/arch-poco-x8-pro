@@ -1,0 +1,17 @@
+# klee: the basics this phone needs from the first boot on: pid_max kept at
+# 32768 (MediaTek's kernel protection resets the phone on a larger pid), USB
+# network + SSH (10.15.19.82:8022, key only), Wi-Fi power-on, panel
+# brightness sync, power key, and a debug dump after each boot.
+pkgname=klee-base
+pkgver=1
+pkgrel=2
+pkgdesc="POCO X8 Pro (klee) base system settings and porting aids"
+arch=(any)
+license=(GPL-2.0-or-later)
+depends=(klee-container openssh networkmanager)
+install=klee-base.install
+
+package() {
+	cp -a "$startdir/files/." "$pkgdir/"
+	chown -R root:root "$pkgdir"
+}

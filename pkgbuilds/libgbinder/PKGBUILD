@@ -1,0 +1,26 @@
+# klee: same version as the working UT 24.04 install
+pkgname=libgbinder
+pkgver=1.1.45
+pkgrel=1
+pkgdesc="GLib-style interface to binder (Android IPC)"
+arch=(aarch64)
+url="https://github.com/mer-hybris/libgbinder"
+license=(BSD-3-Clause)
+depends=(glib2 libglibutil)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+build() {
+	cd $pkgname-$pkgver
+	make CC="$CC" KEEP_SYMBOLS=1 PKG_CONFIG="$PKG_CONFIG" release pkgconfig
+}
+
+package() {
+	cd $pkgname-$pkgver
+	make DESTDIR="$pkgdir" LIBDIR=/usr/lib install-dev
+	# the binder-* test tools (binder-list, binder-call) help when debugging HALs
+	make CC="$CC" KEEP_SYMBOLS=1 PKG_CONFIG="$PKG_CONFIG" -C test/binder-list release
+	make CC="$CC" KEEP_SYMBOLS=1 PKG_CONFIG="$PKG_CONFIG" -C test/binder-call release
+	install -Dm755 test/binder-list/build/release/binder-list "$pkgdir/usr/bin/binder-list"
+	install -Dm755 test/binder-call/build/release/binder-call "$pkgdir/usr/bin/binder-call"
+}

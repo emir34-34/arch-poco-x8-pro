@@ -1,0 +1,18 @@
+[Unit]
+Description=Mount Android APEXes
+DefaultDependencies=no
+Requires=mount-android-system.service
+After=mount-android-system.service
+After=mount-android-partitions.service
+Before=sysinit.target
+
+ConditionPathIsDirectory=/android/apex
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/lxc-android-config/mount-apexes.py \
+    "com.android.runtime" \
+    "com.android.art" \
+    "com.android.i18n" \
+    "com.android.vndk.*"

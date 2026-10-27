@@ -1,0 +1,87 @@
+From 535c0f3879dab310166c470b6e88e166cc145208 Mon Sep 17 00:00:00 2001
+From: emir34-34 <emir34-34@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 13:38:17 +0300
+Subject: [PATCH 2/2] klee: no AppArmor, own config fragment and version
+ (-klee)
+
+---
+ arch/arm64/configs/halium.config | 13 ++++---------
+ arch/arm64/configs/klee.config   |  5 +++++
+ security/security.c              | 12 ++++++------
+ 3 files changed, 15 insertions(+), 15 deletions(-)
+ create mode 100644 arch/arm64/configs/klee.config
+
+diff --git a/arch/arm64/configs/halium.config b/arch/arm64/configs/halium.config
+index aca969f51..5f130e085 100644
+--- a/arch/arm64/configs/halium.config
++++ b/arch/arm64/configs/halium.config
+@@ -17,10 +17,10 @@ CONFIG_RFKILL=m
+ # CONFIG_MODULE_SIG_FORCE is not set
+ # CONFIG_MODULE_SIG_PROTECT is not set
+ 
+-# AppArmor
+-CONFIG_SECURITY_APPARMOR=y
+-CONFIG_DEFAULT_SECURITY_APPARMOR=y
+-CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,apparmor,selinux,smack,tomoyo,bpf"
++# No AppArmor (Ubuntu's click confinement); SELinux only in recovery, see
++# security/security.c
++# CONFIG_SECURITY_APPARMOR is not set
++CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,bpf"
+ 
+ # Waydroid
+ CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder,anbox-binder,anbox-hwbinder,anbox-vndbinder"
+@@ -28,10 +28,5 @@ CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y
+ CONFIG_SQUASHFS=y
+ CONFIG_SQUASHFS_FILE_DIRECT=y
+ CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y
+-# Snap
+-CONFIG_SQUASHFS_LZ4=y
+-CONFIG_SQUASHFS_LZO=y
+-CONFIG_SQUASHFS_XZ=y
+-CONFIG_SQUASHFS_ZSTD=y
+ # FIXME: breaks GKI ABI somehow, needed by some snaps like btop & qtcreator
+ #CONFIG_CGROUP_DEVICE=y
+diff --git a/arch/arm64/configs/klee.config b/arch/arm64/configs/klee.config
+new file mode 100644
+index 000000000..a5a8bab07
+--- /dev/null
++++ b/arch/arm64/configs/klee.config
+@@ -0,0 +1,5 @@
++# klee (POCO X8 Pro, MT6899) on top of gki_defconfig + halium.config.
++# Keep changes away from anything that alters the GKI KMI: HyperOS's vendor
++# modules (vermagic 6.6.102-android15-8) must keep loading.
++CONFIG_LOCALVERSION="-klee"
++CONFIG_DEFAULT_HOSTNAME="klee"
+diff --git a/security/security.c b/security/security.c
+index 91e9e56e5..a59814993 100644
+--- a/security/security.c
++++ b/security/security.c
+@@ -352,11 +352,11 @@ static void __init report_lsm_order(void)
+ }
+ 
+ /*
+- * klee dual boot: Ubuntu Touch needs AppArmor, but in recovery mode the
+- * bootloader starts this same kernel (from the boot partition) with the
+- * OrangeFox ramdisk, and Android's init cannot run without SELinux. Only one
+- * of the two can be active, so use SELinux unless the bootloader asked for
+- * a normal boot.
++ * klee dual boot: the Linux side runs Android's vendor services in a
++ * container without SELinux (CONFIG_LSM has none of the big LSMs), but in
++ * recovery mode the bootloader starts this same kernel (from the boot
++ * partition) with the OrangeFox ramdisk, and Android's init cannot run
++ * without SELinux. Use SELinux unless the bootloader asked for a normal boot.
+  */
+ static __initconst const char klee_recovery_lsm_order[] =
+ 	"landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,bpf";
+@@ -379,7 +379,7 @@ static void __init ordered_lsm_init(void)
+ 			       GFP_KERNEL);
+ 
+ 	if (!chosen_lsm_order && klee_recovery_boot()) {
+-		pr_info("klee: recovery boot, using SELinux instead of AppArmor\n");
++		pr_info("klee: recovery boot, using SELinux\n");
+ 		chosen_lsm_order = klee_recovery_lsm_order;
+ 	}
+ 
+-- 
+2.56.0
+

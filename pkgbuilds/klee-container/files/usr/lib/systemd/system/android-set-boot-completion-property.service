@@ -1,0 +1,14 @@
+[Unit]
+Description=Set boot completion property in Android container
+Requisite=display-manager.service
+After=display-manager.service
+
+[Service]
+Type=oneshot
+ExecCondition=test -x /usr/bin/setprop
+ExecStart=/usr/bin/setprop dev.bootcomplete 1
+ExecStart=/usr/bin/setprop sys.boot_completed 1
+ExecStart=/usr/bin/setprop init.svc.bootanim stopped
+
+[Install]
+WantedBy=multi-user.target

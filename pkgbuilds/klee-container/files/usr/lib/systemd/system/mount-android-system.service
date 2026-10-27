@@ -1,0 +1,12 @@
+[Unit]
+Description=Find the Android's system or root image
+DefaultDependencies=no
+Before=sysinit.target
+
+# If this path is setup, we're probably booted from non-migrated halium-boot.
+ConditionPathIsMountPoint=!/android
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/lxc-android-config/mount-android-system

@@ -1,0 +1,38 @@
+# klee: same version as the working UT 24.04 install. Talks to the modem
+# through Android's AIDL radio HAL (/etc/ofono/binder.conf, two SIM slots).
+pkgname=ofono-binder-plugin
+pkgver=1.1.25
+pkgrel=1
+pkgdesc="oFono plugin for Android radio HALs over binder"
+arch=(aarch64)
+url="https://github.com/mer-hybris/ofono-binder-plugin"
+license=(GPL-2.0-only)
+depends=(ofono-sailfish libgbinder-radio libgbinder libmce-glib libglibutil)
+backup=(etc/ofono/binder.conf)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz" binder.conf)
+sha256sums=(SKIP SKIP)
+
+prepare() {
+	cd $pkgname-$pkgver
+	# klee: the SIM has an ISIM app; oFono reads EF_IMPI over a logical
+	# channel, the MediaTek modem refuses it (MISSING_RESOURCE) and oFono's
+	# session callbacks then use freed memory: ofonod crashed every boot
+	# before the modem registered. No channel driver = ISIM files skipped.
+	# (Ubuntu Touch did this at run time with the libklee_ofono_noisim shim.)
+	sed -i 's/^    \.open_channel2          = binder_sim_open_channel,/    .open_channel2          = NULL, \/* klee: no logical channels *\//' src/binder_sim.c
+	grep -q 'open_channel2          = NULL' src/binder_sim.c
+}
+
+build() {
+	cd $pkgname-$pkgver
+	make CC="$CC" PLUGINDIR=/usr/lib/ofono/plugins KEEP_SYMBOLS=1 release
+	make CC="$CC" -C lib LIBDIR=/usr/lib KEEP_SYMBOLS=1 release pkgconfig
+}
+
+package() {
+	cd $pkgname-$pkgver
+	make DESTDIR="$pkgdir" PLUGINDIR=/usr/lib/ofono/plugins install
+	make -C lib DESTDIR="$pkgdir" LIBDIR=/usr/lib install install-dev
+	# the phone's own settings (as on Ubuntu Touch): AIDL radio, two slots
+	install -Dm644 "$srcdir/binder.conf" "$pkgdir/etc/ofono/binder.conf"
+}

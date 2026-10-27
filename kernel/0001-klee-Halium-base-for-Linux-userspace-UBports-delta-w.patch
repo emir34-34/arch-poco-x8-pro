@@ -1,0 +1,512 @@
+From 1e354f7aae45b4059b3d0fe2859af9300dd40e68 Mon Sep 17 00:00:00 2001
+From: emir34-34 <emir34-34@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 13:37:59 +0300
+Subject: [PATCH 1/2] klee: Halium base for Linux userspace (UBports delta,
+ without Ubuntu AppArmor)
+
+binder, SysV IPC kept out of task_struct (KMI), GKI module quirks so
+HyperOS's vendor modules load, Bluetooth hci_sync fix, LSM choice
+between normal boot and recovery (OrangeFox needs SELinux). The Ubuntu
+AppArmor extensions (Lomiri click confinement) are left out.
+---
+ android/abi_gki_aarch64_pixel    |  8 +++++
+ arch/arm64/configs/halium.config | 37 +++++++++++++++++++++++
+ drivers/android/binder.c         | 16 +++++-----
+ include/linux/sched.h            | 33 ++++++++++++++++++---
+ include/linux/shm.h              |  2 +-
+ ipc/sem.c                        | 12 ++++----
+ ipc/shm.c                        |  6 ++--
+ kernel/fork.c                    | 29 +++++++++++++++++-
+ kernel/kcmp.c                    |  4 +--
+ kernel/module/Makefile           |  1 +
+ kernel/module/gki_quirks.c       | 51 ++++++++++++++++++++++++++++++++
+ kernel/module/internal.h         |  3 ++
+ kernel/module/main.c             |  3 +-
+ net/bluetooth/hci_sync.c         |  7 +++++
+ security/security.c              | 26 ++++++++++++++++
+ 15 files changed, 213 insertions(+), 25 deletions(-)
+ create mode 100644 arch/arm64/configs/halium.config
+ create mode 100755 kernel/module/gki_quirks.c
+
+diff --git a/android/abi_gki_aarch64_pixel b/android/abi_gki_aarch64_pixel
+index 25a3c7d79..cf200fc52 100644
+--- a/android/abi_gki_aarch64_pixel
++++ b/android/abi_gki_aarch64_pixel
+@@ -130,6 +130,7 @@
+   bpf_trace_run7
+   bpf_trace_run8
+   bpf_trace_run9
++  bt_err
+   build_skb
+   bus_find_device
+   bus_for_each_dev
+@@ -1184,6 +1185,13 @@
+   handle_sysrq
+   hashlen_string
+   have_governor_per_policy
++  hci_alloc_dev_priv
++  hci_free_dev
++  hci_recv_frame
++  hci_register_dev
++  hci_resume_dev
++  hci_suspend_dev
++  hci_unregister_dev
+   hdmi_avi_infoframe_pack
+   hex2bin
+   hex_dump_to_buffer
+diff --git a/arch/arm64/configs/halium.config b/arch/arm64/configs/halium.config
+new file mode 100644
+index 000000000..aca969f51
+--- /dev/null
++++ b/arch/arm64/configs/halium.config
+@@ -0,0 +1,37 @@
++CONFIG_SYSVIPC=y
++CONFIG_PID_NS=y
++CONFIG_USER_NS=y
++CONFIG_VT=y
++CONFIG_NULL_TTY=y
++CONFIG_DEVTMPFS=y
++# CONFIG_LTO_CLANG_FULL=y will fail without a LOT of RAM
++CONFIG_LTO_CLANG_THIN=y
++# bluebinder - BT/RFCOMM/HIDP/RFKILL are GKI modules (module_outs), keep modular
++CONFIG_BT=m
++CONFIG_BT_RFCOMM=m
++CONFIG_BT_HIDP=m
++# HCIVHCI is not a GKI module; keep built-in for bluebinder /dev/vhci
++CONFIG_BT_HCIVHCI=y
++CONFIG_RFKILL=m
++# Do not enforce kernel modules signature
++# CONFIG_MODULE_SIG_FORCE is not set
++# CONFIG_MODULE_SIG_PROTECT is not set
++
++# AppArmor
++CONFIG_SECURITY_APPARMOR=y
++CONFIG_DEFAULT_SECURITY_APPARMOR=y
++CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,apparmor,selinux,smack,tomoyo,bpf"
++
++# Waydroid
++CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder,anbox-binder,anbox-hwbinder,anbox-vndbinder"
++CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y
++CONFIG_SQUASHFS=y
++CONFIG_SQUASHFS_FILE_DIRECT=y
++CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y
++# Snap
++CONFIG_SQUASHFS_LZ4=y
++CONFIG_SQUASHFS_LZO=y
++CONFIG_SQUASHFS_XZ=y
++CONFIG_SQUASHFS_ZSTD=y
++# FIXME: breaks GKI ABI somehow, needed by some snaps like btop & qtcreator
++#CONFIG_CGROUP_DEVICE=y
+diff --git a/drivers/android/binder.c b/drivers/android/binder.c
+index 4ec3fabb5..97a7c591b 100644
+--- a/drivers/android/binder.c
++++ b/drivers/android/binder.c
+@@ -3518,12 +3518,15 @@ static void binder_transaction(struct binder_proc *proc,
+ 		security_cred_getsecid(proc->cred, &secid);
+ 		ret = security_secid_to_secctx(secid, &secctx, &secctx_sz);
+ 		if (ret) {
+-			binder_txn_error("%d:%d failed to get security context\n",
+-				thread->pid, proc->pid);
+-			return_error = BR_FAILED_REPLY;
+-			return_error_param = ret;
+-			return_error_line = __LINE__;
+-			goto err_get_secctx_failed;
++			/*
++			 * cred_getsecid is implemented by SELinux, which
++			 * Android relies on by default. Without it the secid
++			 * stays 0 and the active LSM cannot resolve it. Send
++			 * the transaction without a security context instead
++			 * of failing it.
++			 */
++			secctx = NULL;
++			secctx_sz = 0;
+ 		}
+ 		added_size = ALIGN(secctx_sz, sizeof(u64));
+ 		extra_buffers_size += added_size;
+@@ -4010,7 +4013,6 @@ static void binder_transaction(struct binder_proc *proc,
+ err_bad_extra_size:
+ 	if (secctx)
+ 		security_release_secctx(secctx, secctx_sz);
+-err_get_secctx_failed:
+ 	kfree(tcomplete);
+ 	binder_stats_deleted(BINDER_STAT_TRANSACTION_COMPLETE);
+ err_alloc_tcomplete_failed:
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 6d6824770..f92aa66ea 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1072,10 +1072,15 @@ struct task_struct {
+ 
+ 	struct nameidata		*nameidata;
+ 
+-#ifdef CONFIG_SYSVIPC
+-	struct sysv_sem			sysvsem;
+-	struct sysv_shm			sysvshm;
+-#endif
++	/*
++	 * SYSVIPC state (sysv_sem / sysv_shm) is not a member of task_struct
++	 * in this build: precompiled GKI vendor modules occasionally overrun
++	 * the ANDROID_KABI_RESERVE slots, which would corrupt those fields if
++	 * they lived inside the struct. Instead, the task_struct slab slot is
++	 * overallocated and the SYSVIPC fields are placed past the end of the
++	 * struct. Access them via task_sysvsem() / task_sysvshm().
++	 */
++
+ #ifdef CONFIG_DETECT_HUNG_TASK
+ 	unsigned long			last_switch_count;
+ 	unsigned long			last_switch_time;
+@@ -1562,6 +1567,26 @@ struct task_struct {
+ 	 */
+ };
+ 
++#ifdef CONFIG_SYSVIPC
++/*
++ * SYSVIPC state lives in the trailing area of the task_struct slab slot,
++ * past sizeof(struct task_struct). The slab is overallocated in fork_init()
++ * so that vendor module overruns into ANDROID_KABI_RESERVE cannot reach it.
++ */
++extern size_t __task_sysvsem_offset;
++extern size_t __task_sysvshm_offset;
++
++static inline struct sysv_sem *task_sysvsem(struct task_struct *tsk)
++{
++	return (struct sysv_sem *)((char *)tsk + __task_sysvsem_offset);
++}
++
++static inline struct sysv_shm *task_sysvshm(struct task_struct *tsk)
++{
++	return (struct sysv_shm *)((char *)tsk + __task_sysvshm_offset);
++}
++#endif
++
+ static inline struct pid *task_pid(struct task_struct *task)
+ {
+ 	return task->thread_pid;
+diff --git a/include/linux/shm.h b/include/linux/shm.h
+index d8e69aed3..2f8b86b81 100644
+--- a/include/linux/shm.h
++++ b/include/linux/shm.h
+@@ -18,7 +18,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, unsigned long *addr,
+ 	      unsigned long shmlba);
+ bool is_file_shm_hugepages(struct file *file);
+ void exit_shm(struct task_struct *task);
+-#define shm_init_task(task) INIT_LIST_HEAD(&(task)->sysvshm.shm_clist)
++#define shm_init_task(task) INIT_LIST_HEAD(&task_sysvshm(task)->shm_clist)
+ #else
+ struct sysv_shm {
+ 	/* empty */
+diff --git a/ipc/sem.c b/ipc/sem.c
+index a39cdc7bf..e69643246 100644
+--- a/ipc/sem.c
++++ b/ipc/sem.c
+@@ -1851,7 +1851,7 @@ static inline int get_undo_list(struct sem_undo_list **undo_listp)
+ {
+ 	struct sem_undo_list *undo_list;
+ 
+-	undo_list = current->sysvsem.undo_list;
++	undo_list = task_sysvsem(current)->undo_list;
+ 	if (!undo_list) {
+ 		undo_list = kzalloc(sizeof(*undo_list), GFP_KERNEL_ACCOUNT);
+ 		if (undo_list == NULL)
+@@ -1860,7 +1860,7 @@ static inline int get_undo_list(struct sem_undo_list **undo_listp)
+ 		refcount_set(&undo_list->refcnt, 1);
+ 		INIT_LIST_HEAD(&undo_list->list_proc);
+ 
+-		current->sysvsem.undo_list = undo_list;
++		task_sysvsem(current)->undo_list = undo_list;
+ 	}
+ 	*undo_listp = undo_list;
+ 	return 0;
+@@ -2313,9 +2313,9 @@ int copy_semundo(unsigned long clone_flags, struct task_struct *tsk)
+ 		if (error)
+ 			return error;
+ 		refcount_inc(&undo_list->refcnt);
+-		tsk->sysvsem.undo_list = undo_list;
++		task_sysvsem(tsk)->undo_list = undo_list;
+ 	} else
+-		tsk->sysvsem.undo_list = NULL;
++		task_sysvsem(tsk)->undo_list = NULL;
+ 
+ 	return 0;
+ }
+@@ -2336,10 +2336,10 @@ void exit_sem(struct task_struct *tsk)
+ {
+ 	struct sem_undo_list *ulp;
+ 
+-	ulp = tsk->sysvsem.undo_list;
++	ulp = task_sysvsem(tsk)->undo_list;
+ 	if (!ulp)
+ 		return;
+-	tsk->sysvsem.undo_list = NULL;
++	task_sysvsem(tsk)->undo_list = NULL;
+ 
+ 	if (!refcount_dec_and_test(&ulp->refcnt))
+ 		return;
+diff --git a/ipc/shm.c b/ipc/shm.c
+index 0f3455d32..fc0e00b96 100644
+--- a/ipc/shm.c
++++ b/ipc/shm.c
+@@ -449,12 +449,12 @@ void exit_shm(struct task_struct *task)
+ 
+ 		task_lock(task);
+ 
+-		if (list_empty(&task->sysvshm.shm_clist)) {
++		if (list_empty(&task_sysvshm(task)->shm_clist)) {
+ 			task_unlock(task);
+ 			break;
+ 		}
+ 
+-		shp = list_first_entry(&task->sysvshm.shm_clist, struct shmid_kernel,
++		shp = list_first_entry(&task_sysvshm(task)->shm_clist, struct shmid_kernel,
+ 				shm_clist);
+ 
+ 		/*
+@@ -792,7 +792,7 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
+ 	shp->ns = ns;
+ 
+ 	task_lock(current);
+-	list_add(&shp->shm_clist, &current->sysvshm.shm_clist);
++	list_add(&shp->shm_clist, &task_sysvshm(current)->shm_clist);
+ 	task_unlock(current);
+ 
+ 	/*
+diff --git a/kernel/fork.c b/kernel/fork.c
+index b909fa1cc..40ef39ad4 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1057,6 +1057,16 @@ static void set_max_threads(unsigned int max_threads_suggested)
+ int arch_task_struct_size __read_mostly;
+ #endif
+ 
++#ifdef CONFIG_SYSVIPC
++/*
++ * Offsets (within the overallocated task_struct slab slot) of the SYSVIPC
++ * fields that we deliberately keep outside struct task_struct. See the
++ * comment in include/linux/sched.h.
++ */
++size_t __task_sysvsem_offset __ro_after_init;
++size_t __task_sysvshm_offset __ro_after_init;
++#endif
++
+ #ifndef CONFIG_ARCH_TASK_STRUCT_ALLOCATOR
+ static void task_struct_whitelist(unsigned long *offset, unsigned long *size)
+ {
+@@ -1083,11 +1093,28 @@ void __init fork_init(void)
+ #endif
+ 	int align = max_t(int, L1_CACHE_BYTES, ARCH_MIN_TASKALIGN);
+ 	unsigned long useroffset, usersize;
++	size_t task_struct_size = arch_task_struct_size;
++
++#ifdef CONFIG_SYSVIPC
++	/*
++	 * Reserve room for sysv_sem / sysv_shm past the end of struct
++	 * task_struct. Precompiled GKI vendor modules sometimes overrun the
++	 * ANDROID_KABI_RESERVE slots; keeping the SYSVIPC state outside the
++	 * struct prevents such overruns from corrupting it.
++	 */
++	task_struct_size = ALIGN(task_struct_size, __alignof__(struct sysv_sem));
++	__task_sysvsem_offset = task_struct_size;
++	task_struct_size += sizeof(struct sysv_sem);
++
++	task_struct_size = ALIGN(task_struct_size, __alignof__(struct sysv_shm));
++	__task_sysvshm_offset = task_struct_size;
++	task_struct_size += sizeof(struct sysv_shm);
++#endif
+ 
+ 	/* create a slab on which task_structs can be allocated */
+ 	task_struct_whitelist(&useroffset, &usersize);
+ 	task_struct_cachep = kmem_cache_create_usercopy("task_struct",
+-			arch_task_struct_size, align,
++			task_struct_size, align,
+ 			SLAB_PANIC|SLAB_ACCOUNT,
+ 			useroffset, usersize, NULL);
+ #endif
+diff --git a/kernel/kcmp.c b/kernel/kcmp.c
+index 5353edfad..6eb264c87 100644
+--- a/kernel/kcmp.c
++++ b/kernel/kcmp.c
+@@ -196,8 +196,8 @@ SYSCALL_DEFINE5(kcmp, pid_t, pid1, pid_t, pid2, int, type,
+ 		break;
+ 	case KCMP_SYSVSEM:
+ #ifdef CONFIG_SYSVIPC
+-		ret = kcmp_ptr(task1->sysvsem.undo_list,
+-			       task2->sysvsem.undo_list,
++		ret = kcmp_ptr(task_sysvsem(task1)->undo_list,
++			       task_sysvsem(task2)->undo_list,
+ 			       KCMP_SYSVSEM);
+ #else
+ 		ret = -EOPNOTSUPP;
+diff --git a/kernel/module/Makefile b/kernel/module/Makefile
+index 25fe68e7f..cca2017ed 100644
+--- a/kernel/module/Makefile
++++ b/kernel/module/Makefile
+@@ -10,6 +10,7 @@ KCOV_INSTRUMENT_main.o := n
+ obj-y += main.o
+ obj-y += strict_rwx.o
+ obj-y += kmod.o
++obj-y += gki_quirks.o
+ obj-$(CONFIG_MODULE_DEBUG_AUTOLOAD_DUPS) += dups.o
+ obj-$(CONFIG_MODULE_DECOMPRESS) += decompress.o
+ obj-$(CONFIG_MODULE_SIG) += signing.o
+diff --git a/kernel/module/gki_quirks.c b/kernel/module/gki_quirks.c
+new file mode 100755
+index 000000000..d8e288c13
+--- /dev/null
++++ b/kernel/module/gki_quirks.c
+@@ -0,0 +1,51 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <linux/module.h>
++
++static struct pid *find_get_pid_global_ns(pid_t nr)
++{
++	struct pid *pid;
++
++	rcu_read_lock();
++	pid = get_pid(find_pid_ns(nr, &init_pid_ns));
++	rcu_read_unlock();
++
++	return pid;
++}
++
++struct gki_quirks_hook {
++	const char *module_name;
++	const char *symbol_name;
++	void *func;
++};
++
++static const struct gki_quirks_hook gki_quirks_list[] = {
++	/*
++	 * Pixel 6/7: mali_kbase mistakenly uses find_get_pid
++	 * with the global ids from task_struct of "current".
++	 */
++	{ "mali_kbase", "find_get_pid", find_get_pid_global_ns },
++	// Ditto for MTK SoC devices, needed for Waydroid
++	{ "mali_kbase_mt6789", "find_get_pid", find_get_pid_global_ns },
++        { "mali_kbase_mt6878", "find_get_pid", find_get_pid_global_ns },
++	{ "mali_kbase_mt6899_r49", "find_get_pid", find_get_pid_global_ns }, /* Poco X8 Pro (klee) */
++
++	{ } /* terminating entry must be last */
++};
++
++unsigned long gki_quirks_get_hooked_symbol_value(const struct module *mod,
++				const char *name, unsigned long value)
++{
++	const struct gki_quirks_hook *hook;
++
++	for (hook = gki_quirks_list; hook->module_name; hook++) {
++		if (strcmp(mod->name, hook->module_name) == 0
++			&& strcmp(name, hook->symbol_name) == 0) {
++			pr_info("gki_quirks: hooking %s symbol for %s module\n",
++					name, mod->name);
++			return (unsigned long)hook->func;
++		}
++	}
++
++	return value;
++}
+diff --git a/kernel/module/internal.h b/kernel/module/internal.h
+index 5f7e37056..c926d4ca7 100644
+--- a/kernel/module/internal.h
++++ b/kernel/module/internal.h
+@@ -117,6 +117,9 @@ char *module_next_tag_pair(char *string, unsigned long *secsize);
+ #define for_each_modinfo_entry(entry, info, name) \
+ 	for (entry = get_modinfo(info, name); entry; entry = get_next_modinfo(info, name, entry))
+ 
++unsigned long gki_quirks_get_hooked_symbol_value(const struct module *mod,
++				const char *name, unsigned long value);
++
+ static inline void module_assert_mutex_or_preempt(void)
+ {
+ #ifdef CONFIG_LOCKDEP
+diff --git a/kernel/module/main.c b/kernel/module/main.c
+index acd237bf6..b7aed54e4 100644
+--- a/kernel/module/main.c
++++ b/kernel/module/main.c
+@@ -1442,7 +1442,8 @@ static int simplify_symbols(struct module *mod, const struct load_info *info)
+ 			ksym = resolve_symbol_wait(mod, info, name);
+ 			/* Ok if resolved.  */
+ 			if (ksym && !IS_ERR(ksym)) {
+-				sym[i].st_value = kernel_symbol_value(ksym);
++				sym[i].st_value = gki_quirks_get_hooked_symbol_value(mod, name,
++					kernel_symbol_value(ksym));
+ 				break;
+ 			}
+ 
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index ad298577a..47bacdbf3 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -4721,11 +4721,18 @@ static int hci_get_mws_transport_config_sync(struct hci_dev *hdev)
+ /* Check for Synchronization Train support */
+ static int hci_read_sync_train_params_sync(struct hci_dev *hdev)
+ {
++	/* Halium: BT chip returns error for HCI_OP_READ_SYNC_TRAIN_PARAMS,
++	 * which causes the initialization to fail. As this feature is not used
++	 * anywhere, skipping reading the parameters should be safe. */
++#if 0
+ 	if (!lmp_sync_train_capable(hdev))
+ 		return 0;
+ 
+ 	return __hci_cmd_sync_status(hdev, HCI_OP_READ_SYNC_TRAIN_PARAMS,
+ 				     0, NULL, HCI_CMD_TIMEOUT);
++#else
++	return 0;
++#endif
+ }
+ 
+ /* Enable Secure Connections if supported and configured */
+diff --git a/security/security.c b/security/security.c
+index 1794860fd..91e9e56e5 100644
+--- a/security/security.c
++++ b/security/security.c
+@@ -11,6 +11,7 @@
+ 
+ #define pr_fmt(fmt) "LSM: " fmt
+ 
++#include <linux/bootconfig.h>
+ #include <linux/bpf.h>
+ #include <linux/capability.h>
+ #include <linux/dcache.h>
+@@ -350,6 +351,26 @@ static void __init report_lsm_order(void)
+ 	pr_cont("\n");
+ }
+ 
++/*
++ * klee dual boot: Ubuntu Touch needs AppArmor, but in recovery mode the
++ * bootloader starts this same kernel (from the boot partition) with the
++ * OrangeFox ramdisk, and Android's init cannot run without SELinux. Only one
++ * of the two can be active, so use SELinux unless the bootloader asked for
++ * a normal boot.
++ */
++static __initconst const char klee_recovery_lsm_order[] =
++	"landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,bpf";
++
++static bool __init klee_recovery_boot(void)
++{
++	const char *v;
++
++	if (strstr(boot_command_line, "androidboot.force_normal_boot=1"))
++		return false;
++	v = xbc_find_value("androidboot.force_normal_boot", NULL);
++	return !(v && !strcmp(v, "1"));
++}
++
+ static void __init ordered_lsm_init(void)
+ {
+ 	struct lsm_info **lsm;
+@@ -357,6 +378,11 @@ static void __init ordered_lsm_init(void)
+ 	ordered_lsms = kcalloc(LSM_COUNT + 1, sizeof(*ordered_lsms),
+ 			       GFP_KERNEL);
+ 
++	if (!chosen_lsm_order && klee_recovery_boot()) {
++		pr_info("klee: recovery boot, using SELinux instead of AppArmor\n");
++		chosen_lsm_order = klee_recovery_lsm_order;
++	}
++
+ 	if (chosen_lsm_order) {
+ 		if (chosen_major_lsm) {
+ 			pr_warn("security=%s is ignored because it is superseded by lsm=%s\n",
+-- 
+2.56.0
+

@@ -1,0 +1,21 @@
+#!/bin/sh
+# xfetch: download Arch Linux ARM aarch64 packages (signature checked with the
+# ALARM build key) into alarm-pkgs/ and unpack them into the PC sysroot, for
+# build dependencies the phone does not have yet. Install them on the phone
+# later with pacman -S (names are listed in alarm-pkgs/NEEDED).
+A=$HOME/klee-ut/arch
+set -e
+for p; do
+	d=$(ls -d $A/alarm-db/*/"$p"-[0-9]* 2>/dev/null | head -1)
+	[ -n "$d" ] || { echo "xfetch: $p not found" >&2; exit 1; }
+	repo=$(basename $(dirname $d))
+	f=$(sed -n '/^%FILENAME%/{n;p}' $d/desc)
+	[ -f $A/alarm-pkgs/$f ] || {
+		curl -sSfL -o $A/alarm-pkgs/$f http://mirror.archlinuxarm.org/aarch64/$repo/$f
+		curl -sSfL -o $A/alarm-pkgs/$f.sig http://mirror.archlinuxarm.org/aarch64/$repo/$f.sig
+	}
+	gpgv --keyring $A/.gnupg/pubring.kbx $A/alarm-pkgs/$f.sig $A/alarm-pkgs/$f 2>/dev/null || { echo "xfetch: BAD SIGNATURE $f" >&2; exit 1; }
+	tar -xf $A/alarm-pkgs/$f -C $A/sysroot --exclude='.[A-Z]*' usr 2>/dev/null || true
+	grep -qx "$p" $A/alarm-pkgs/NEEDED 2>/dev/null || echo "$p" >> $A/alarm-pkgs/NEEDED
+	echo "xfetch: $f ok"
+done

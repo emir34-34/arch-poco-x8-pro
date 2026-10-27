@@ -1,0 +1,21 @@
+# klee: same version as the working UT 24.04 install
+pkgname=libgbinder-radio
+pkgver=1.6.1
+pkgrel=1
+pkgdesc="Binder client library for Android radio (RIL) interfaces"
+arch=(aarch64)
+url="https://github.com/mer-hybris/libgbinder-radio"
+license=(BSD-3-Clause)
+depends=(libgbinder libglibutil)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+build() {
+	cd $pkgname-$pkgver
+	make CC="$CC" KEEP_SYMBOLS=1 PKG_CONFIG="$PKG_CONFIG" release pkgconfig
+}
+
+package() {
+	cd $pkgname-$pkgver
+	make DESTDIR="$pkgdir" LIBDIR=/usr/lib install-dev
+}

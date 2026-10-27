@@ -1,0 +1,13 @@
+[Unit]
+Description=Bind-mount Halium overlay from Android image
+DefaultDependencies=no
+Requires=mount-android-system.service
+After=mount-android-system.service
+# To support overlaying /system or /vendor (used in Andorid 9+)
+After=mount-android-partitions.service
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/lxc-android-config/mount-halium-overlay

@@ -1,0 +1,26 @@
+# klee: same version as the working UT 24.04 install (1.5.0); UT loaded it
+# through module-droid-discover with helper=false.
+pkgname=pulseaudio-modules-droid-hidl
+pkgver=1.5.0
+pkgrel=1
+pkgdesc="PulseAudio module answering Android audio HAL binder calls (AudioFlinger side)"
+arch=(aarch64)
+url="https://github.com/mer-hybris/pulseaudio-modules-droid-hidl"
+license=(LGPL-2.1-or-later)
+depends=(pulseaudio pulseaudio-modules-droid libgbinder)
+makedepends=(meson pulsecore-headers)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+build() {
+	cd $pkgname-$pkgver
+	echo "$pkgver" > .tarball-version
+	meson setup build --cross-file "$KLEE_XENV/cross.ini" --prefix=/usr --libdir=lib \
+		--buildtype=release -Dmodlibexecdir=/usr/lib/pulseaudio/modules
+	meson compile -C build
+}
+
+package() {
+	cd $pkgname-$pkgver
+	meson install -C build --destdir "$pkgdir"
+}

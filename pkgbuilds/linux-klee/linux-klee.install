@@ -1,0 +1,2 @@
+post_install() { depmod 6.6.143-klee-g535c0f3879da; }
+post_upgrade() { depmod 6.6.143-klee-g535c0f3879da; }

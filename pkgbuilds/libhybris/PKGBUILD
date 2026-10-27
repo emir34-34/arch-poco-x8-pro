@@ -1,0 +1,60 @@
+# klee: libhybris at the commit Ubuntu Touch 24.04 shipped (git20250630+0cedf90),
+# configured as for the earlier working builds (glvnd, wayland, Mali quirks).
+pkgname=libhybris
+pkgver=0.1.0.r0cedf90
+pkgrel=2
+pkgdesc="Use Android (bionic) libraries such as the Mali EGL from glibc programs"
+arch=(aarch64)
+url="https://github.com/libhybris/libhybris"
+license=(Apache-2.0)
+depends=(libglvnd wayland libdrm)
+makedepends=(android-headers)
+source=("libhybris::git+file://$HOME/klee-ut/ztos-build/libhybris#commit=0cedf90"
+	0001-pthread_cond_clockwait.patch)
+sha256sums=(SKIP SKIP)
+
+prepare() {
+	# upstream 04e3a46 (2026-03): MediaTek's audio HAL waits with
+	# pthread_cond_clockwait; unhooked, bionic's version ran on glibc's
+	# condition variable and PulseAudio died (SIGBUS). UT used a preload shim.
+	git -C libhybris apply "$srcdir/0001-pthread_cond_clockwait.patch"
+	cd libhybris/hybris/common/q
+	# TRACE() passes path lists (std::vector) to a printf format: undefined
+	# behaviour that gcc only warns about and clang refuses. Print the count.
+	sed -i '/TRACE("\[ opening %s from namespace %s from %s\]"/{
+		s/from %s\]"/from %zu paths]"/
+		s/ns->get_ld_library_paths())/ns->get_ld_library_paths().size())/
+		s/needed_by->get_dt_runpath())/needed_by->get_dt_runpath().size())/
+		s/ns->get_default_library_paths())/ns->get_default_library_paths().size())/
+	}' linker.cpp
+}
+
+build() {
+	cd libhybris/hybris
+	NOCONFIGURE=1 ./autogen.sh
+	./configure --host=aarch64-unknown-linux-gnu --prefix=/usr --libdir=/usr/lib \
+		--enable-arch=arm64 --with-android-headers="$KLEE_SYSROOT/usr/include/android" \
+		--enable-glvnd --enable-wayland --enable-mali-quirks --enable-experimental \
+		--enable-property-cache --with-default-egl-platform=null \
+		--with-default-hybris-ld-library-path=/system/lib64:/odm/lib64:/vendor/lib64:/odm/lib64/hw:/vendor/lib64/hw:/vendor/lib64/egl \
+		WAYLAND_SCANNER=/usr/bin/wayland-scanner
+	# the bundled tests do not build against these headers; not needed
+	sed -i "/^SUBDIRS = /,/[^\\\\]$/ s/ tests\b//" Makefile
+	make -j"$(nproc)"
+}
+
+package() {
+	cd libhybris/hybris
+	# cross build: libtool re-links at install time with -L/usr/lib, the PC's
+	# own (x86) libraries; the libraries are already linked right (sysroot)
+	find . -name '*.la' -exec sed -i '/^relink_command=/d' {} +
+	make DESTDIR="$pkgdir" install
+	# glvnd: libEGL.so.1 picks the hybris EGL (as Ubuntu Touch's package did)
+	install -d "$pkgdir/usr/share/glvnd/egl_vendor.d"
+	printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_libhybris.so.0"\n    }\n}\n' \
+		> "$pkgdir/usr/share/glvnd/egl_vendor.d/10_libhybris.json"
+	# the headers were only needed to build
+	rm -rf "$pkgdir/usr/include/android"
+	# the standard Khronos headers come from libglvnd and mesa
+	rm -rf "$pkgdir"/usr/include/{EGL,GLES,GLES2,GLES3,KHR}
+}

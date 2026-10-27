@@ -1,0 +1,22 @@
+# klee: our kernel (Google android15-6.6 at 6.6.143 + Halium base, no Ubuntu
+# AppArmor; tree ~/klee-ut/kernel-klee, built in ~/klee-ut/kout-klee). The
+# kernel itself is flashed to boot_b (arch/out/klee_boot.img); this package
+# carries its modules (hci_vhci for bluebinder, ...) and a copy of the image.
+# HyperOS's vendor/system_dlkm modules are loaded from the Android partitions.
+pkgname=linux-klee
+pkgver=6.6.143
+pkgrel=1
+pkgdesc="Kernel modules for the POCO X8 Pro (klee) kernel 6.6.143-klee-g535c0f3879da"
+arch=(aarch64)
+license=(GPL-2.0-only)
+options=(!strip)
+install=linux-klee.install
+
+package() {
+	export LC_ALL=C PATH="$HOME/klee-ut/toolchain/clang-r510928/bin:$PATH"
+	make -C "$HOME/klee-ut/kernel-klee" O="$HOME/klee-ut/kout-klee" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+		INSTALL_MOD_STRIP=1 INSTALL_MOD_PATH="$pkgdir/usr" DEPMOD=/bin/true modules_install
+	rm -f "$pkgdir/usr/lib/modules/6.6.143-klee-g535c0f3879da/build" "$pkgdir/usr/lib/modules/6.6.143-klee-g535c0f3879da/source"
+	install -Dm644 "$HOME/klee-ut/kout-klee/arch/arm64/boot/Image.lz4" "$pkgdir/usr/lib/modules/6.6.143-klee-g535c0f3879da/Image.lz4"
+	install -Dm644 "$HOME/klee-ut/arch/out/klee_boot.img" "$pkgdir/usr/share/klee/klee_boot.img"
+}

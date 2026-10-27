@@ -1,0 +1,12 @@
+[Unit]
+Description=Mount Android partitions
+DefaultDependencies=no
+Requires=mount-android-system.service
+After=mount-android-system.service
+Before=sysinit.target
+RequiresMountsFor=/var/lib/android-data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/lxc-android-config/mount-android-partitions

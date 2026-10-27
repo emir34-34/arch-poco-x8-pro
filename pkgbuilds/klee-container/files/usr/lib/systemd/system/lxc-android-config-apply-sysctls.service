@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply retroactively per-network-interface sysctls
+After=systemd-sysctl.service
+ConditionPathIsReadWrite=/proc/sys/net/
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/lxc-android-config/apply-sysctls
+
+[Install]
+WantedBy=systemd-sysctl.service

@@ -1,0 +1,55 @@
+#!/bin/dash -e
+
+# It turns out that sysctl knobs under net.ipv{4,6}.conf.all.*, unless
+# explicitly documented, are not taken into account at all. So if there are
+# existing interfaces by the time sysctl knobs are set, the only to apply those
+# knobs are setting it interface-per-interface.
+
+# In addition to that, there are a number of Android devices (mostly using
+# Qualcomm SoC) which sets sysctls (in particular `accept_ra_defrtr`). So we
+# have to wait for the Android service which sets sysctls to finish to avoide
+# racing with it.
+
+android_service_exists() {
+    local service_name="$1"
+
+    grep -q --max-count 1 "^service ${service_name} " \
+        /vendor/etc/init/hw/*.rc \
+        /vendor/etc/init/*.rc
+}
+
+wait_for_android_oneshot_service() {
+    local service_name="$1"
+    local state
+    local timeout=10
+
+    # https://stackoverflow.com/a/24421013
+    while
+        state=$(getprop "init.svc.${service_name}")
+        [ "$state" != "stopped" ] && [ $timeout -gt 0 ]
+    do
+        sleep 1
+        timeout=$(( timeout - 1 ))
+    done
+
+    if [ $timeout = 0 ]; then
+        echo "Waiting for Android service '${service_name}' timed out." >&2
+    fi
+}
+
+# The list of oneshot services are collected across a number of device repos in
+# LineageOS GitHub.
+for service_name in \
+    qcom-sh \
+    vendor.qcom-sh \
+    zetaw-sh \
+; do
+    if android_service_exists "${service_name}"; then
+        wait_for_android_oneshot_service "${service_name}"
+    fi
+done
+
+for ipv6_conf in /proc/sys/net/ipv6/conf/*; do
+    # /usr/lib/sysctl.d/10-lxc-android-config.conf
+    echo 0 >"${ipv6_conf}/accept_ra_defrtr"
+done

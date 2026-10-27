@@ -1,0 +1,29 @@
+[Unit]
+Description=LXC Android Config and Container Initialization
+# We sort of replace systemd-udev-trigger.service, so we inherits most of its
+# dependencies.
+DefaultDependencies=no
+Wants=systemd-udevd.service systemd-udev-trigger.service
+After=systemd-udevd-kernel.socket systemd-udevd-control.socket
+Before=systemd-udev-trigger.service sysinit.target
+
+# Our own dependencies
+Requires=mount-android-system.service mount-halium-overlay.service mount-android-partitions.service lxc-android-config-mount-apexes.service
+After=mount-android-system.service mount-halium-overlay.service mount-android-partitions.service lxc-android-config-mount-apexes.service
+
+# See our version of systemd-udev-trigger.service to see why.
+OnFailure=systemd-udev-trigger-real.service
+
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=exec
+
+# Will be propagated from lxc-start to Android's init.
+# Has to be set here because Android 9's second stage init doesn't reset it.
+UMask=0000
+
+ExecStart=/usr/libexec/lxc-android-config/start-android-container
+ExecStartPost=/usr/lib/lxc-android-config/lxc-android-ready
+ExecStop=/usr/bin/lxc-stop -n android -k

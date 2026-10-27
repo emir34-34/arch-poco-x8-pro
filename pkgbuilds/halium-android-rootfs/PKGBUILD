@@ -1,0 +1,16 @@
+# klee: the Android userland the vendor container runs (LineageOS-based
+# Halium 14, lineage_halium_arm64 AP2A.240905.003, API 34), the same image
+# Ubuntu Touch 24.04 used on this phone. HyperOS's vendor/odm partitions are
+# mounted under it; the initrd mounts it from /var/lib/lxc/android.
+pkgname=halium-android-rootfs
+pkgver=14.0.532
+pkgrel=1
+pkgdesc="Halium 14 Android system image for the vendor container"
+arch=(aarch64)
+license=(Apache-2.0)
+options=(!strip)
+
+package() {
+	install -Dm644 "$HOME/klee-ut/arch/ut-rootfs/var/lib/lxc/android/android-rootfs.img" \
+		"$pkgdir/var/lib/lxc/android/android-rootfs.img"
+}

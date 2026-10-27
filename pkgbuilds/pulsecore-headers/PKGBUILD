@@ -1,0 +1,33 @@
+# klee: PulseAudio's internal (pulsecore) headers at exactly the version
+# Arch Linux ARM ships, plus a pulsecore.pc for out-of-tree modules
+# (pulseaudio-modules-droid). Arch's pulseaudio package has no such files.
+pkgname=pulsecore-headers
+pkgver=17.0+r134+g77d25a1e6
+pkgrel=1
+pkgdesc="PulseAudio pulsecore headers for out-of-tree modules"
+arch=(any)
+url="https://www.freedesktop.org/wiki/Software/PulseAudio/"
+license=(LGPL-2.1-or-later)
+depends=("pulseaudio=$pkgver")
+source=("pulseaudio::git+https://gitlab.freedesktop.org/pulseaudio/pulseaudio.git#commit=77d25a1e6")
+sha256sums=(SKIP)
+
+package() {
+	cd pulseaudio/src
+	install -d "$pkgdir/usr/include/pulsecore"
+	cp -a --parents $(find pulsecore -name '*.h') "$pkgdir/usr/include/"
+	install -d "$pkgdir/usr/lib/pkgconfig"
+	cat > "$pkgdir/usr/lib/pkgconfig/pulsecore.pc" <<PC
+prefix=/usr
+libdir=\${prefix}/lib/pulseaudio
+includedir=\${prefix}/include
+modlibexecdir=\${prefix}/lib/pulseaudio/modules
+
+Name: pulsecore
+Description: PulseAudio internal (module) API
+Version: 17.0
+Requires: libpulse
+Libs: -L\${libdir} -lpulsecore-17.0 -lpulsecommon-17.0 -Wl,-rpath,\${libdir}
+Cflags: -I\${includedir}
+PC
+}

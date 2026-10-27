@@ -1,0 +1,20 @@
+# klee: Android 11 (API 30) headers for building libhybris (Debian/Droidian android-headers-30)
+pkgname=android-headers
+pkgver=30
+pkgrel=1
+pkgdesc="Android headers for libhybris"
+arch=(any)
+license=(Apache-2.0)
+package() {
+	install -d "$pkgdir/usr/include"
+	cp -r "$startdir/android" "$pkgdir/usr/include/android"
+	install -d "$pkgdir/usr/lib/pkgconfig"
+	cat > "$pkgdir/usr/lib/pkgconfig/android-headers.pc" <<PC
+prefix=/usr
+includedir=\${prefix}/include/android
+Name: android-headers
+Description: Android headers for libhybris
+Version: $pkgver
+Cflags: -I\${includedir}
+PC
+}

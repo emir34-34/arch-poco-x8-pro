@@ -1,0 +1,203 @@
+#!/bin/busybox sh
+# klee initrd: boots Arch Linux on slot _b of the POCO X8 Pro (klee, MT6899).
+# Replaces Ubuntu Touch's initramfs-tools + halium scripts with the steps this
+# phone really needs, in this order:
+#   1. recovery: hand over to OrangeFox (Android init) untouched
+#   2. HyperOS's first-stage vendor modules (vendor_boot ramdisk)
+#   3. super (Android slot _a) -> dm devices, ut_data pinned file -> dm device
+#   4. ut_data (ext4) holds the Arch root in /halium-rootfs
+#   5. the Android container's root: Halium's android-rootfs.img with
+#      HyperOS's vendor partitions mounted under it (/android)
+#   6. switch_root to systemd
+# Never touches Android's userdata contents, /metadata, or slot _a's boot.
+
+B=/bin/busybox
+
+# --- 1. recovery --------------------------------------------------------------
+# The bootloader starts this same ramdisk (merged with vendor_boot's recovery
+# fragment = OrangeFox) for recovery. Unless it asked for a normal boot, get out
+# of the way and run Android's init.
+if [ -e /system/bin/recovery ] && [ -e /system/bin/init ]; then
+	$B mkdir -p /proc
+	$B mount -t proc proc /proc
+	normal=n
+	$B grep -q 'androidboot.force_normal_boot = "1"' /proc/bootconfig 2>/dev/null && normal=y
+	$B grep -q 'androidboot.force_normal_boot=1' /proc/cmdline && normal=y
+	$B umount /proc
+	if [ $normal = n ]; then
+		$B mkdir /.klee
+		$B mv /init /bin /etc /.klee/
+		B=/.klee/bin/busybox
+		$B ln -s /system/bin /bin
+		$B ln -s /system/etc /etc
+		$B ln -s /system/bin/init /init
+		exec /init
+	fi
+fi
+
+$B --install -s /bin
+export PATH=/bin
+mkdir -p /proc /sys /dev /run /tmp /root /tmpmnt /android-rootfs /android-system
+mount -t proc -o nodev,noexec,nosuid proc /proc
+mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
+mount -t devtmpfs -o mode=0755,nosuid devtmpfs /dev
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
+# MediaTek's kernel protection (MKP) resets the phone when a pid above 32768
+# appears; nothing may raise it (systemd would set 4194304)
+echo 32768 > /proc/sys/kernel/pid_max
+exec >/dev/kmsg 2>&1
+log() { echo "klee-init: $*"; }
+T0=$(cut -d. -f1 /proc/uptime)
+log "start (kernel $(uname -r))"
+
+# Something went wrong: keep the phone up (the vendor watchdog kicker is
+# loaded by now) and reachable: USB network 10.15.19.82, telnet on port 23.
+panic() {
+	log "PANIC: $*"
+	G=/sys/kernel/config/usb_gadget/g1
+	mount -t configfs none /sys/kernel/config 2>/dev/null
+	mkdir -p $G/strings/0x409 $G/configs/c.1/strings/0x409 $G/functions/ncm.usb0
+	echo 0x18d1 > $G/idVendor; echo 0xd002 > $G/idProduct
+	echo "klee initrd rescue" > $G/strings/0x409/product
+	ln -s $G/functions/ncm.usb0 $G/configs/c.1/ 2>/dev/null
+	ls /sys/class/udc | head -1 > $G/UDC
+	sleep 2
+	IF=$(cat $G/functions/ncm.usb0/ifname 2>/dev/null)
+	ifconfig "${IF:-usb0}" 10.15.19.82 netmask 255.255.255.0 up
+	telnetd -l /bin/sh -p 23
+	while :; do sleep 3600; done
+}
+
+# --- 2. vendor first-stage modules -------------------------------------------
+# vendor_boot's ramdisk brings /lib/modules/*.ko + modules.load (Android order,
+# which is already dependency order). Load them in that order: the watchdog
+# kicker (aee_hangdet's wdtk threads) and the reboot-mode modules must come
+# exactly as on Android.
+load_modules() {
+	kver=$(uname -r)
+	[ -d /lib/modules ] || return
+	if [ ! -e /lib/modules/$kver ]; then
+		mv /lib/modules /lib/$kver && mkdir /lib/modules && mv /lib/$kver /lib/modules/$kver
+	fi
+	M=/lib/modules/$kver
+	[ -s $M/modules.load ] || return
+	depmod -a 2>/dev/null
+	skip=" $(sed -n 's/^blocklist \([^ ]*\)\.ko.*/\1/p; s/^blocklist \([^ ]*\)$/\1/p' $M/modules.blocklist 2>/dev/null | tr '\n' ' ')"
+	skip="$skip $(sed -n 's/^blacklist //p' /etc/klee/blacklist 2>/dev/null | tr '\n' ' ') "
+	n=0
+	while read -r m _; do
+		case "$m" in ''|'#'*) continue ;; esac
+		name=$(basename "$m" .ko)
+		case "$skip" in *" $name "*|*" ${name}.ko "*) log "skipping $name (blocklist)"; continue ;; esac
+		modprobe "$name" 2>/dev/null || insmod "$M/$m" 2>/dev/null || log "could not load $name"
+		n=$((n + 1))
+	done < $M/modules.load
+	log "$n vendor modules loaded"
+}
+load_modules
+
+# --- 3. block devices ---------------------------------------------------------
+# No udev here: /dev/disk/by-partlabel from sysfs.
+mklabels() {
+	mkdir -p /dev/disk/by-partlabel
+	for u in /sys/class/block/*/uevent; do
+		p=$(sed -n 's/^PARTNAME=//p' $u)
+		d=$(sed -n 's/^DEVNAME=//p' $u)
+		[ -n "$p" ] && [ -n "$d" ] && ln -sf /dev/$d /dev/disk/by-partlabel/$p
+	done
+}
+# UFS comes from a vendor module and may still be probing
+i=0
+mklabels
+while [ ! -e /dev/disk/by-partlabel/super ] || [ ! -e /dev/disk/by-partlabel/userdata ]; do
+	[ $i -ge 300 ] && panic "no super/userdata partition after 30 s"
+	sleep 0.1
+	mklabels
+	i=$((i + 1))
+done
+export DM_DISABLE_UDEV=1
+log "mapping Android slot $(cat /etc/klee/android_slot) logical partitions from super"
+lp-map /dev/disk/by-partlabel/super "$(cat /etc/klee/android_slot)" || panic "lp-map failed"
+dmsetup mknodes
+# ut_data: pinned file in Android's userdata, mapped only after its ext4 UUID
+# and trailer signature check out (never falls back to userdata itself)
+klee-pinmap /etc/klee/ut_data.map || panic "klee-pinmap refused ut_data; userdata was not touched"
+dmsetup mknodes
+UTD=/dev/mapper/ut_data
+[ -b $UTD ] || panic "no $UTD"
+[ "$(blkid -o value -s TYPE $UTD)" = ext4 ] || panic "$UTD is not ext4, refusing to touch it"
+
+# --- 4. ut_data and the Arch root ----------------------------------------------
+# preen: replays the journal and fixes the trivial; a real problem gets -y
+e2fsck -p $UTD; r=$?
+if [ $r -ge 4 ]; then
+	log "e2fsck -p returned $r, running e2fsck -y"
+	e2fsck -y $UTD
+fi
+mount -t ext4 -o discard,noatime $UTD /tmpmnt || panic "cannot mount ut_data"
+[ -d /tmpmnt/halium-rootfs ] || panic "no /halium-rootfs in ut_data"
+mount --bind /tmpmnt/halium-rootfs /root
+[ -x /root/usr/lib/systemd/systemd ] || panic "no systemd in the Arch root"
+log "ut_data mounted, Arch root found ($(( $(cut -d. -f1 /proc/uptime) - T0 )) s)"
+
+# --- 5. the Android container root -------------------------------------------
+AR=/root/var/lib/lxc/android/android-rootfs.img
+[ -f $AR ] || panic "no $AR"
+mount -t ext4 -o loop,ro $AR /android-rootfs || panic "cannot mount $AR"
+mount --bind /android-rootfs/system /android-system
+
+mkdir -p /root/userdata
+mount --move /tmpmnt /root/userdata
+mount --move /android-rootfs /root/var/lib/lxc/android/rootfs
+mount --bind /root/var/lib/lxc/android/rootfs /root/android
+# Android's /data: a directory of ut_data, shared by Linux and the container
+mkdir -p /root/userdata/android-data
+mount --bind /root/userdata/android-data /root/android/data
+[ -e /root/data ] || ln -s /android/data /root/data
+# version properties Halium's init expects (persist.halium.*)
+P=/root/userdata/android-data/property
+mkdir -p $P && chmod 700 $P
+for k in persist.halium.version.rootfs persist.halium.version.device persist.halium.version.custom \
+	persist.halium.version.channel persist.halium.version persist.halium.default_language; do
+	[ -e $P/$k ] || { printf unknown > $P/$k; chmod 600 $P/$k; }
+done
+
+# HyperOS's partitions (vendor, odm, *_dlkm, ...) from the container's fstab,
+# taken from Android slot _a
+SLOT=$(cat /etc/klee/android_slot)
+for fstab in /root/var/lib/lxc/android/rootfs/fstab*; do
+	[ -f "$fstab" ] || continue
+	while read -r dev mnt type opts _; do
+		case "$dev" in '#endhalium'*) break ;; ''|'#'*) continue ;; esac
+		[ -n "$mnt" ] && [ -n "$type" ] && [ -n "$opts" ] || continue
+		case "$mnt" in /system|/data|/|/metadata) continue ;; esac
+		label=${dev##*/}
+		path=
+		for c in /dev/mapper/$label$SLOT /dev/mapper/$label /dev/disk/by-partlabel/$label$SLOT /dev/disk/by-partlabel/$label; do
+			[ -e "$c" ] && { path=$c; break; }
+		done
+		[ -n "$path" ] || continue
+		mkdir -p /root/android$mnt 2>/dev/null
+		mount -t $type -o $opts $path /root/android$mnt && log "mounted $label at /android$mnt" || log "could not mount $label at /android$mnt"
+	done < "$fstab"
+done
+if ! grep -q " /root/android/cache " /proc/mounts; then
+	mkdir -p /root/userdata/cache /root/android/cache 2>/dev/null
+	mount --bind /root/userdata/cache /root/android/cache
+fi
+[ -e /root/android/vendor ] || ln -sf system/vendor /root/android/vendor
+mount --move /android-system /root/android/system
+# hardware specific Android overrides (Halium overlay), file by file
+if [ -d /root/android/system/halium ]; then
+	(cd /root/android/system/halium && find . -type f) | while read -r f; do
+		[ -f /root/$f ] && mount --bind /root/android/system/halium/$f /root/$f
+	done
+fi
+
+# --- 6. hand over to systemd --------------------------------------------------
+log "switching to the Arch root ($(( $(cut -d. -f1 /proc/uptime) - T0 )) s in the initrd)"
+mount --move /run /root/run
+mount --move /dev /root/dev
+mount --move /sys /root/sys
+mount --move /proc /root/proc
+exec switch_root /root /usr/lib/systemd/systemd

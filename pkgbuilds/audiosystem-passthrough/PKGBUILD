@@ -1,0 +1,22 @@
+# klee: same version as the working UT 24.04 install (needed by
+# pulseaudio-modules-droid-hidl)
+pkgname=audiosystem-passthrough
+pkgver=1.3.1
+pkgrel=1
+pkgdesc="Android audio system binder passthrough helper"
+arch=(aarch64)
+url="https://github.com/mer-hybris/audiosystem-passthrough"
+license=(BSD-3-Clause)
+depends=(glib2 libgbinder libglibutil)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+build() {
+	cd $pkgname-$pkgver
+	make CC="$CC" LD="$CC" PREFIX=/usr LIBDIR=/usr/lib KEEP_SYMBOLS=1
+}
+
+package() {
+	cd $pkgname-$pkgver
+	make CC="$CC" LD="$CC" KEEP_SYMBOLS=1 DESTDIR="$pkgdir" PREFIX=/usr LIBDIR=/usr/lib install
+}

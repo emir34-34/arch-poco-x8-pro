@@ -1,0 +1,28 @@
+# klee: same version as the working UT 24.04 install. Bridges Android's
+# Bluetooth HAL (binder) to the kernel's HCI through /dev/vhci, so BlueZ works.
+pkgname=bluebinder
+pkgver=1.0.19
+pkgrel=1
+pkgdesc="Android Bluetooth HAL to Linux HCI (vhci) proxy"
+arch=(aarch64)
+url="https://github.com/mer-hybris/bluebinder"
+license=(GPL-2.0-only)
+depends=(libgbinder systemd-libs bluez)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz" klee.conf)
+sha256sums=(SKIP SKIP)
+
+build() {
+	cd $pkgname-$pkgver
+	# (-flto from the Makefile: lld would need LLVM bitcode support; plain link)
+	make CC="$CC" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" bluebinder
+}
+
+package() {
+	cd $pkgname-$pkgver
+	install -Dm755 bluebinder "$pkgdir/usr/bin/bluebinder"
+	install -Dm755 bluebinder_wait.sh "$pkgdir/usr/bin/droid/bluebinder_wait.sh"
+	install -Dm755 bluebinder_post.sh "$pkgdir/usr/bin/droid/bluebinder_post.sh"
+	sed 's#/usr/sbin/bluebinder#/usr/bin/bluebinder#' bluebinder.service \
+		| install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/system/bluebinder.service"
+	install -Dm644 "$srcdir/klee.conf" "$pkgdir/usr/lib/systemd/system/bluebinder.service.d/klee.conf"
+}

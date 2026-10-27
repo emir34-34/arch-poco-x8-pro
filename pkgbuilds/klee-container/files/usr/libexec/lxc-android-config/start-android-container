@@ -1,0 +1,43 @@
+#!/bin/sh -euf
+
+# Here, we want to pass arguments or environment variable to Android's init so
+# that it goes directly to the second stage and won't intefere with what the
+# environment we've prepared.
+#
+# The method to enter second stage init differs between Android versions, so
+# determine the right way here and pass that to lxc-start.
+
+api_level=$(sed -n 's/^ro.build.version.sdk=//p' /android/system/build.prop)
+
+if [ "$api_level" -le 22 ]; then
+    # Android <= 5.1 doesn't have second stage. To work under this scheme, it
+    # has to be patched specifically to support this.
+    stage2_env=""
+    stage2_arg=""
+elif [ "$api_level" -le 25 ]; then # Android 6.0 through 7.1.
+    stage2_env=""
+    stage2_arg="--second-stage"
+elif [ "$api_level" -le 28 ]; then # Android 8.0 through 9
+    stage2_env="INIT_SECOND_STAGE=true"
+    stage2_arg=""
+else # Android 10 and beyond
+    stage2_env=""
+    stage2_arg="second_stage"
+fi
+
+# Because we skipped first stage(s), we has to set a few more environment variables:
+# - PATH -- It's a merge of Android 9 & 11's _PATH_DEFPATH.
+# - INIT_STARTED_AT -- Android 9 init seems to check for it. Although here we
+#   fake it unless we want to involve /system/bin/sh
+# Also we pass `-i` to clear environments, for good measure.
+#
+# And now it's time to pass control to lxc-start. Good luck!
+
+# Intend to split arguments, in case it needs more than 1 of them.
+# shellcheck disable=SC2086
+exec /usr/bin/lxc-start -n android -F -- \
+    /system/bin/env -i \
+        PATH=/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/sbin:/system/sbin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin \
+        INIT_STARTED_AT=0 \
+        $stage2_env \
+        /init $stage2_arg

@@ -1,0 +1,38 @@
+# klee: what glibc programs need preloaded before they load Android (bionic)
+# libraries through libhybris:
+#  - libtls-padding.so (UBports): reserves the early TLS slots bionic
+#    believes it owns;
+#  - libklee_free.so (ours): memory that bionic's allocator (scudo) handed
+#    out and glibc code frees goes back to bionic instead of aborting.
+# /etc/profile.d puts both in LD_PRELOAD for login shells; services set it
+# in their units.
+pkgname=klee-hybris-runtime
+pkgver=1
+pkgrel=1
+pkgdesc="Preload libraries for libhybris programs on the POCO X8 Pro"
+arch=(aarch64)
+license=(custom)
+depends=(libhybris)
+source=("tls-padding::git+https://gitlab.com/ubports/development/core/hybris-support/tls-padding.git#commit=c878eeb"
+	klee_free.c)
+sha256sums=(SKIP SKIP)
+
+build() {
+	cd tls-padding
+	$CXX $CXXFLAGS -std=c++11 -fPIC -shared $LDFLAGS -o libtls-padding.so tls-padding.cpp
+	cd "$srcdir"
+	$CC $CFLAGS -fPIC -shared $LDFLAGS -o libklee_free.so klee_free.c -ldl
+}
+
+package() {
+	install -Dm755 tls-padding/libtls-padding.so "$pkgdir/usr/lib/libtls-padding.so"
+	install -Dm755 libklee_free.so "$pkgdir/usr/lib/libklee_free.so"
+	install -Dm644 tls-padding/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.tls-padding"
+	install -Dm644 /dev/stdin "$pkgdir/etc/profile.d/klee-hybris.sh" <<'SH'
+# klee: preloads for programs that load Android libraries (libhybris)
+case "$LD_PRELOAD" in
+	*libtls-padding.so*) ;;
+	*) export LD_PRELOAD=/usr/lib/libtls-padding.so:/usr/lib/libklee_free.so${LD_PRELOAD:+:$LD_PRELOAD} ;;
+esac
+SH
+}

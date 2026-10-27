@@ -1,0 +1,21 @@
+# klee: same version as the working UT 24.04 install (needed by ofono-binder-plugin)
+pkgname=libmce-glib
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="GLib wrapper for the MCE (display/battery state) D-Bus interface"
+arch=(aarch64)
+url="https://github.com/sailfishos/libmce-glib"
+license=(BSD-3-Clause)
+depends=(glib2 libglibutil)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+build() {
+	cd $pkgname-$pkgver
+	make CC="$CC" KEEP_SYMBOLS=1 PKG_CONFIG="$PKG_CONFIG" release pkgconfig
+}
+
+package() {
+	cd $pkgname-$pkgver
+	make DESTDIR="$pkgdir" LIBDIR=/usr/lib install-dev
+}

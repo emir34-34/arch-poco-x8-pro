@@ -1,0 +1,15 @@
+# rfkill
+ACTION=="add", KERNEL=="rfkill", GROUP="android_input", MODE="0660"
+
+# Various devices's udev rules make rtc0 owned by system:system. This causes trouble
+# to systemd-timedated as, even though it runs as root, it drops almost all
+# capabilities including CAP_DAC_OVERRIDE. So, the file have to be readable by root
+# and system, so that both the Android component(s) and the systemd-timedated can
+# access it.
+ACTION=="add", KERNEL=="rtc0", OWNER="root", GROUP="system", MODE="0660"
+
+# Same goes for /dev/mtp_usb, except it has to be usable by phablet user.
+ACTION=="add", KERNEL=="mtp_usb", OWNER="root", GROUP="plugdev", MODE="0660"
+
+# Disallow loading PulseAudio ALSA module for card0, we want a droid-card
+KERNEL=="card0", SUBSYSTEM=="sound", ENV{PULSE_IGNORE}="1"

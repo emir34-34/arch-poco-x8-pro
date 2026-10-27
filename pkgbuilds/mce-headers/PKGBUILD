@@ -1,0 +1,17 @@
+# klee: MCE D-Bus interface headers (build dependency of libmce-glib)
+pkgname=mce-headers
+pkgver=1.34.0
+pkgrel=1
+pkgdesc="MCE D-Bus interface headers"
+arch=(any)
+url="https://github.com/sailfishos/mce-dev"
+license=(LGPL-2.1-only)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+package() {
+	cd mce-dev-$pkgver
+	install -d "$pkgdir/usr/include/mce" "$pkgdir/usr/lib/pkgconfig"
+	install -m644 include/mce/*.h "$pkgdir/usr/include/mce/"
+	install -m644 mce.pc "$pkgdir/usr/lib/pkgconfig/mce.pc"
+}

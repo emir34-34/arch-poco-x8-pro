@@ -1,0 +1,18 @@
+# klee: the Android (HyperOS slot _a) vendor container, from Ubuntu Touch's
+# lxc-android-config (the parts this phone uses) plus the klee overlay:
+# MediaTek udev rules, slot-aware partition mounts, halium overlay libs and
+# the SELinux label guard that keeps the IMEI safe.
+pkgname=klee-container
+pkgver=1
+pkgrel=3
+pkgdesc="Android vendor container for the POCO X8 Pro (klee)"
+arch=(any)
+license=(GPL-2.0-or-later)
+depends=(lxc python libhybris libgbinder halium-android-rootfs linux-klee)
+backup=(etc/gbinder.conf)
+install=klee-container.install
+
+package() {
+	cp -a "$startdir/files/." "$pkgdir/"
+	chown -R root:root "$pkgdir"
+}

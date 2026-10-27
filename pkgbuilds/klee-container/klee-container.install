@@ -1,0 +1,7 @@
+post_install() {
+	systemctl enable klee-selinux-guard.service \
+		lxc-android-config-apply-sysctls.service android-set-boot-completion-property.service 2>/dev/null
+	# the lxc@ template unit stops the container 60 s after another unit pulls it in
+	systemctl mask lxc@android.service lxc.service lxc-net.service 2>/dev/null
+	true
+}

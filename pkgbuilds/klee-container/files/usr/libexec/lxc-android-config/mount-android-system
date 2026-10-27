@@ -1,0 +1,57 @@
+#!/bin/sh -euf
+
+# Copyright (C) 2013 Canonical LTD.
+# Copyright (C) 2021 UBports Foundation.
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# So, we need to find /android/system early, because a few things depend
+# on /android/system being mounted other than the container itself.
+
+log() {
+    echo "$*" >&2
+}
+
+# Check if /android is a mountpoint already.
+if mountpoint -q /android; then
+    log "Booted from not-migrated halium-boot. Do nothing."
+    exit 0
+fi
+
+# Find where the Android's system or rootfs is.
+ANDROID_SYSTEM=''
+for f in \
+    /var/lib/lxc/android/android-rootfs.img \
+    /var/lib/lxc/android/system.img \
+    /userdata/android-rootfs.img \
+    /userdata/system.img \
+; do
+    # Use -f to avoid confusing with /userdata/system.img being a symlink
+    # to /userdata/ubuntu.img.
+    if [ -f "$f" ]; then
+        ANDROID_SYSTEM="$f"
+        break
+    fi
+done
+
+if [ -z "$ANDROID_SYSTEM" ]; then
+    log "Can't find Android's system or rootfs. Bailing!"
+    exit 1
+fi
+
+if [ -e /userdata/.writable_device_image ] || [ -e /.writable_device_image ]; then
+    MOUNT_RW="rw"
+else
+    MOUNT_RW="ro"
+fi
+
+mkdir -p /android
+
+if [ "$(basename "$ANDROID_SYSTEM")" = "android-rootfs.img" ]; then
+    mount -o loop,${MOUNT_RW} "$ANDROID_SYSTEM" /android # Will contain /system/
+else
+    mount -t tmpfs -o rw android-root /android
+    # We won't acutally extract the ramdisk in this step. We just want
+    # /android/system to be mounted.
+    mkdir /android/system
+    mount -o loop,${MOUNT_RW} "$ANDROID_SYSTEM" /android/system
+fi

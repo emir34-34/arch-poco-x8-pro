@@ -1,0 +1,34 @@
+#!/bin/sh
+# klee (MediaTek gen4m Wi-Fi): power the chip on and hand wlan0 to NetworkManager.
+# On Android the vendor Wi-Fi HAL writes "1" to /dev/wmtWifi. The interface shows
+# up a few seconds before the chip can actually be brought up: until then
+# "ip link set wlan0 up" fails with ENODEV, and NetworkManager, which tries right
+# away, gives up on the supplicant interface after 5 attempts and never retries.
+# So wait until wlan0 really goes up, then make NetworkManager take it again.
+i=0
+while [ ! -e /dev/wmtWifi ] && [ $i -lt 90 ]; do sleep 1; i=$((i + 1)); done
+[ -e /dev/wmtWifi ] || { echo "klee-wifi: /dev/wmtWifi never appeared"; exit 0; }
+ok=""
+for try in $(seq 1 30); do
+	echo 1 > /dev/wmtWifi 2>/dev/null
+	if [ -e /sys/class/net/wlan0 ] && ip link set wlan0 up 2>/dev/null; then
+		ok=$try
+		break
+	fi
+	sleep 2
+done
+if [ -z "$ok" ]; then
+	echo "klee-wifi: wlan0 could not be brought up"
+	exit 0
+fi
+echo "klee-wifi: wlan0 is up (try $ok)"
+# let NetworkManager re-acquire the supplicant interface
+if command -v nmcli >/dev/null 2>&1; then
+	i=0
+	while ! nmcli -t general status >/dev/null 2>&1 && [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done
+	nmcli radio wifi off 2>/dev/null
+	sleep 1
+	nmcli radio wifi on 2>/dev/null
+	echo "klee-wifi: NetworkManager re-acquired wlan0"
+fi
+exit 0

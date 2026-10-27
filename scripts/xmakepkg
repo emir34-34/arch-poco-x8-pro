@@ -1,0 +1,3 @@
+#!/bin/sh
+# xmakepkg: cross-build the PKGBUILD in the current dir for the phone (deps are in the sysroot, not checked)
+exec makepkg --config "$HOME/klee-ut/arch/xenv/makepkg-cross.conf" -d -f -C "$@"
