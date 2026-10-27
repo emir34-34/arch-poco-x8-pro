@@ -4,7 +4,7 @@
 # the SELinux label guard that keeps the IMEI safe.
 pkgname=klee-container
 pkgver=1
-pkgrel=4
+pkgrel=5
 pkgdesc="Android vendor container for the POCO X8 Pro (klee)"
 arch=(any)
 license=(GPL-2.0-or-later)

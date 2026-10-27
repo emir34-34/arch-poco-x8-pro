@@ -1,0 +1,7 @@
+#!/bin/bash
+# arundev: like arun, but with the phone's real /dev (block devices, device-mapper)
+H=$(dirname "$(readlink -f "$0")")
+f=$(mktemp); cat > $f
+adb push $f /data/local/tmp/job.sh >/dev/null && rm -f $f
+adb push $H/achdev.sh /data/local/tmp/achdev.sh >/dev/null
+adb shell "su -c 'cp /data/local/tmp/achdev.sh /data/klee_arch/achdev.sh; chmod 755 /data/klee_arch/achdev.sh; cp /data/local/tmp/job.sh /data/klee_arch/rootfs/root/job.sh; /data/klee_arch/achdev.sh \"bash /root/job.sh\"'"

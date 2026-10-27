@@ -1,0 +1,4 @@
+#!/bin/sh
+# apush: copy built packages into the phone's Arch build rootfs (/root/pkgs)
+for f; do adb push "$f" /data/local/tmp/ >/dev/null; done
+adb shell "su -c 'mkdir -p /data/klee_arch/rootfs/root/pkgs; mv /data/local/tmp/*.pkg.tar.zst /data/klee_arch/rootfs/root/pkgs/'"

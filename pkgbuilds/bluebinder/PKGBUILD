@@ -2,7 +2,7 @@
 # Bluetooth HAL (binder) to the kernel's HCI through /dev/vhci, so BlueZ works.
 pkgname=bluebinder
 pkgver=1.0.19
-pkgrel=1
+pkgrel=3
 pkgdesc="Android Bluetooth HAL to Linux HCI (vhci) proxy"
 arch=(aarch64)
 url="https://github.com/mer-hybris/bluebinder"

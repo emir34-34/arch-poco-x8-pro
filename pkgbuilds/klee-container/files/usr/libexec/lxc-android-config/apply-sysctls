@@ -1,4 +1,4 @@
-#!/bin/dash -e
+#!/bin/sh -e
 
 # It turns out that sysctl knobs under net.ipv{4,6}.conf.all.*, unless
 # explicitly documented, are not taken into account at all. So if there are

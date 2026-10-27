@@ -176,6 +176,10 @@ mount --bind /root/var/lib/lxc/android/rootfs /root/android
 # Android's /data: a directory of ut_data, shared by Linux and the container
 mkdir -p /root/userdata/android-data
 mount --bind /root/userdata/android-data /root/android/data
+# (lxc-android-config's mount-android-partitions binds it from here again;
+# Ubuntu Touch's writable-paths used to provide this path)
+mkdir -p /root/var/lib/android-data
+mount --bind /root/userdata/android-data /root/var/lib/android-data
 [ -e /root/data ] || ln -s /android/data /root/data
 # version properties Halium's init expects (persist.halium.*)
 P=/root/userdata/android-data/property

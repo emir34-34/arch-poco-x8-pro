@@ -1,0 +1,8 @@
+#!/bin/bash
+# arun: run stdin as a bash script inside the phone's Arch build rootfs
+# (/data/klee_arch/rootfs under HyperOS, KernelSU root, private mount namespace)
+H=$(dirname "$(readlink -f "$0")")
+f=$(mktemp); cat > $f
+adb push $f /data/local/tmp/job.sh >/dev/null && rm -f $f
+adb push $H/ach.sh /data/local/tmp/ach.sh >/dev/null
+adb shell "su -c 'cp /data/local/tmp/ach.sh /data/klee_arch/ach.sh; chmod 755 /data/klee_arch/ach.sh; cp /data/local/tmp/job.sh /data/klee_arch/rootfs/root/job.sh; /data/klee_arch/ach.sh \"bash /root/job.sh\"'"

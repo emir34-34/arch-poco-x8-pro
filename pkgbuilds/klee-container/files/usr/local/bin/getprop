@@ -1,0 +1,6 @@
+#!/bin/sh
+# klee: libhybris' getprop prints the value, then aborts on exit
+# (unregister_tls_module); scripts under sh -e (lxc-android-ready,
+# apply-sysctls, ...) took that for a failure. Keep the output, exit 0.
+/usr/bin/getprop "$@"
+exit 0
