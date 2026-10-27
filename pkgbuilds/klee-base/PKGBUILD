@@ -4,7 +4,7 @@
 # brightness sync, power key, and a debug dump after each boot.
 pkgname=klee-base
 pkgver=1
-pkgrel=2
+pkgrel=3
 pkgdesc="POCO X8 Pro (klee) base system settings and porting aids"
 arch=(any)
 license=(GPL-2.0-or-later)

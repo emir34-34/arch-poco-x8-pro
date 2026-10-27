@@ -35,8 +35,15 @@ if [ -e /system/bin/recovery ] && [ -e /system/bin/init ]; then
 	fi
 fi
 
-$B --install -s /bin
-export PATH=/bin
+# busybox applets in /bb. Arch's busybox shell runs its own applet for a
+# name even when PATH has another program (prefer-applets), so the real tools
+# are called by full path: /bin/modprobe = kmod (busybox modprobe cannot load these
+# vendor modules properly), /bin/blkid (busybox's ignores -o value -s TYPE).
+$B mkdir -p /bb
+$B --install -s /bb
+$B ln -sf busybox /bin/sh
+for t in depmod modprobe insmod; do $B ln -sf kmod /bin/$t; done
+export PATH=/bin:/bb
 mkdir -p /proc /sys /dev /run /tmp /root /tmpmnt /android-rootfs /android-system
 mount -t proc -o nodev,noexec,nosuid proc /proc
 mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
@@ -50,10 +57,24 @@ log() { echo "klee-init: $*"; }
 T0=$(cut -d. -f1 /proc/uptime)
 log "start (kernel $(uname -r))"
 
-# Something went wrong: keep the phone up (the vendor watchdog kicker is
-# loaded by now) and reachable: USB network 10.15.19.82, telnet on port 23.
+# Debug builds stop at a named step (/etc/klee/probe) and reboot to fastboot:
+# the PC seeing fastboot means "got this far".
+probe() {
+	[ "$(cat /etc/klee/probe 2>/dev/null)" = "$1" ] || return 0
+	log "probe '$1' reached ($(( $(cut -d. -f1 /proc/uptime) - T0 )) s), rebooting to fastboot"
+	sync
+	klee-rebootbl bootloader
+	sleep 5
+}
+
+# Something went wrong: reboot to fastboot (the PC sees it, and the phone does
+# not loop). If even that fails, stay up and reachable over USB: 10.15.19.82,
+# telnet on port 23 (the vendor watchdog kicker is loaded by then).
 panic() {
 	log "PANIC: $*"
+	sync
+	klee-rebootbl bootloader
+	sleep 5
 	G=/sys/kernel/config/usb_gadget/g1
 	mount -t configfs none /sys/kernel/config 2>/dev/null
 	mkdir -p $G/strings/0x409 $G/configs/c.1/strings/0x409 $G/functions/ncm.usb0
@@ -69,10 +90,11 @@ panic() {
 }
 
 # --- 2. vendor first-stage modules -------------------------------------------
-# vendor_boot's ramdisk brings /lib/modules/*.ko + modules.load (Android order,
-# which is already dependency order). Load them in that order: the watchdog
-# kicker (aee_hangdet's wdtk threads) and the reboot-mode modules must come
-# exactly as on Android.
+# vendor_boot's ramdisk brings /lib/modules/*.ko + modules.load (Android order).
+# Load them in that order with kmod, as the working Halium initrd did: the
+# watchdog kicker (aee_hangdet's wdtk threads) must come up before the 31 s
+# hardware watchdog LK left armed runs out, and the reboot-mode modules make
+# "reboot bootloader" work.
 load_modules() {
 	kver=$(uname -r)
 	[ -d /lib/modules ] || return
@@ -81,20 +103,20 @@ load_modules() {
 	fi
 	M=/lib/modules/$kver
 	[ -s $M/modules.load ] || return
-	depmod -a 2>/dev/null
-	skip=" $(sed -n 's/^blocklist \([^ ]*\)\.ko.*/\1/p; s/^blocklist \([^ ]*\)$/\1/p' $M/modules.blocklist 2>/dev/null | tr '\n' ' ')"
-	skip="$skip $(sed -n 's/^blacklist //p' /etc/klee/blacklist 2>/dev/null | tr '\n' ' ') "
+	mkdir -p /etc/modprobe.d
+	sed -e 's/blocklist/blacklist/g' $M/modules.blocklist > /etc/modprobe.d/blacklist.conf 2>/dev/null
+	cat /etc/klee/blacklist >> /etc/modprobe.d/blacklist.conf
+	/bin/depmod -a
 	n=0
 	while read -r m _; do
 		case "$m" in ''|'#'*) continue ;; esac
-		name=$(basename "$m" .ko)
-		case "$skip" in *" $name "*|*" ${name}.ko "*) log "skipping $name (blocklist)"; continue ;; esac
-		modprobe "$name" 2>/dev/null || insmod "$M/$m" 2>/dev/null || log "could not load $name"
+		/bin/modprobe -b "$(basename "$m" .ko)" || log "could not load $m"
 		n=$((n + 1))
 	done < $M/modules.load
 	log "$n vendor modules loaded"
 }
 load_modules
+probe modules
 
 # --- 3. block devices ---------------------------------------------------------
 # No udev here: /dev/disk/by-partlabel from sysfs.
@@ -125,7 +147,7 @@ klee-pinmap /etc/klee/ut_data.map || panic "klee-pinmap refused ut_data; userdat
 dmsetup mknodes
 UTD=/dev/mapper/ut_data
 [ -b $UTD ] || panic "no $UTD"
-[ "$(blkid -o value -s TYPE $UTD)" = ext4 ] || panic "$UTD is not ext4, refusing to touch it"
+[ "$(/bin/blkid -o value -s TYPE $UTD)" = ext4 ] || panic "$UTD is not ext4, refusing to touch it"
 
 # --- 4. ut_data and the Arch root ----------------------------------------------
 # preen: replays the journal and fixes the trivial; a real problem gets -y
@@ -138,6 +160,7 @@ mount -t ext4 -o discard,noatime $UTD /tmpmnt || panic "cannot mount ut_data"
 [ -d /tmpmnt/halium-rootfs ] || panic "no /halium-rootfs in ut_data"
 mount --bind /tmpmnt/halium-rootfs /root
 [ -x /root/usr/lib/systemd/systemd ] || panic "no systemd in the Arch root"
+probe ut_data
 log "ut_data mounted, Arch root found ($(( $(cut -d. -f1 /proc/uptime) - T0 )) s)"
 
 # --- 5. the Android container root -------------------------------------------
@@ -193,6 +216,8 @@ if [ -d /root/android/system/halium ]; then
 		[ -f /root/$f ] && mount --bind /root/android/system/halium/$f /root/$f
 	done
 fi
+
+probe android
 
 # --- 6. hand over to systemd --------------------------------------------------
 log "switching to the Arch root ($(( $(cut -d. -f1 /proc/uptime) - T0 )) s in the initrd)"
